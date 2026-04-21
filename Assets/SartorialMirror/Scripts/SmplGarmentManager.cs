@@ -80,14 +80,18 @@ public sealed class SmplGarmentManager : MonoBehaviour
     public bool skipHandsAndWrists = false;
 
     [Header("Stretch Guard")]
-    [Tooltip("If true, clamp each driven garment bone so it cannot move farther from its SMPL bone than at spawn time.")]
-    public bool clampBoneStretch = true;
+    [Tooltip("If true, clamp each driven garment bone so it cannot move farther from its SMPL bone than at spawn time. Can fight rotation drive; leave off while tuning.")]
+    public bool clampBoneStretch = false;
 
     [Tooltip("Extra slack allowed beyond the initial bone offset (meters).")]
     public float clampSlackMeters = 0.02f;
 
     [Tooltip("If true, drive garment bones using world rotation (more stable than localRotation when bind poses differ).")]
     public bool driveWorldRotation = true;
+
+    [Tooltip("If true (recommended), each frame applies g.rotation = s.rotation * offset where offset encodes rest/bind difference between garment and scene SMPL. " +
+             "Without this, copying s.rotation onto g ignores bind mismatch and often causes spiking/deformed cloth.")]
+    public bool useBindPoseRotationOffset = true;
 
     [Header("Catalog")]
     public GarmentCatalog catalog;
@@ -110,6 +114,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private Dictionary<Transform, Transform> garmentToSmplBoneMap;
     private Transform garmentArmatureRoot;
     private readonly Dictionary<Transform, float> garmentBoneMaxDistance = new();
+    private readonly Dictionary<Transform, Quaternion> bindWorldRotOffset = new();
 
     void Awake()
     {
@@ -253,6 +258,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         garmentToSmplBoneMap = null;
         garmentArmatureRoot = null;
         garmentBoneMaxDistance.Clear();
+        bindWorldRotOffset.Clear();
         if (ActiveGarmentInstance != null)
         {
             Destroy(ActiveGarmentInstance);
@@ -354,6 +360,21 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 garmentBoneMaxDistance[g] = d;
             }
         }
+
+        if (useBindPoseRotationOffset && garmentToSmplBoneMap != null)
+            RecordBindPoseRotationOffsets();
+    }
+
+    void RecordBindPoseRotationOffsets()
+    {
+        bindWorldRotOffset.Clear();
+        foreach (var kv in garmentToSmplBoneMap)
+        {
+            var g = kv.Key;
+            var s = kv.Value;
+            if (g == null || s == null) continue;
+            bindWorldRotOffset[g] = Quaternion.Inverse(s.rotation) * g.rotation;
+        }
     }
 
     void AugmentGarmentDriveMapWithSkinWeights(SkinnedMeshRenderer smr, Dictionary<Transform, Transform> map)
@@ -417,8 +438,18 @@ public sealed class SmplGarmentManager : MonoBehaviour
             var s = kv.Value;
             if (g == null || s == null) continue;
             if (drivePositions) g.position = s.position;
-            if (driveWorldRotation) g.rotation = s.rotation;
-            else g.localRotation = s.localRotation;
+
+            if (driveWorldRotation)
+            {
+                if (useBindPoseRotationOffset && bindWorldRotOffset.TryGetValue(g, out var off))
+                    g.rotation = s.rotation * off;
+                else
+                    g.rotation = s.rotation;
+            }
+            else
+            {
+                g.localRotation = s.localRotation;
+            }
 
             if (clampBoneStretch && garmentBoneMaxDistance.TryGetValue(g, out var maxD))
             {
