@@ -87,8 +87,13 @@ public sealed class SmplGarmentManager : MonoBehaviour
         foreach (var t in smplRoot.GetComponentsInChildren<Transform>(true))
         {
             if (!t) continue;
-            if (!smplBonesByName.ContainsKey(t.name))
-                smplBonesByName.Add(t.name, t);
+            // Add both raw and normalized keys to tolerate FBX importer prefixes.
+            var raw = t.name;
+            var norm = NormalizeBoneName(raw);
+            if (!smplBonesByName.ContainsKey(raw))
+                smplBonesByName.Add(raw, t);
+            if (!string.IsNullOrEmpty(norm) && !smplBonesByName.ContainsKey(norm))
+                smplBonesByName.Add(norm, t);
         }
     }
 
@@ -253,6 +258,15 @@ public sealed class SmplGarmentManager : MonoBehaviour
             smr.rootBone = smplRootBone;
             mappedCount++;
         }
+        else if (smr.rootBone != null)
+        {
+            var normRoot = NormalizeBoneName(smr.rootBone.name);
+            if (!string.IsNullOrEmpty(normRoot) && smplBonesByName.TryGetValue(normRoot, out smplRootBone))
+            {
+                smr.rootBone = smplRootBone;
+                mappedCount++;
+            }
+        }
 
         // 2) Remap all bones by name
         var bones = smr.bones;
@@ -273,6 +287,13 @@ public sealed class SmplGarmentManager : MonoBehaviour
             }
             else
             {
+                var norm = NormalizeBoneName(b.name);
+                if (!string.IsNullOrEmpty(norm) && smplBonesByName.TryGetValue(norm, out smplBone))
+                {
+                    bones[i] = smplBone;
+                    mappedCount++;
+                    continue;
+                }
                 anyMissing = true;
                 if (logMissingBoneNames)
                 {
@@ -344,6 +365,17 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
 
         return null;
+    }
+
+    static string NormalizeBoneName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "";
+        // Unity FBX importer sometimes prefixes names like "Armature|pelvis" or "mixamorig:Hips".
+        int pipe = name.LastIndexOf('|');
+        if (pipe >= 0 && pipe + 1 < name.Length) name = name[(pipe + 1)..];
+        int colon = name.LastIndexOf(':');
+        if (colon >= 0 && colon + 1 < name.Length) name = name[(colon + 1)..];
+        return name;
     }
 }
 
