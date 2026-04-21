@@ -136,10 +136,11 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
 
+        // Set active index before applying variants (ApplyActiveColorVariant reads activeIndex).
+        activeIndex = index;
+
         activeColorVariantIndex = Mathf.Max(0, entry.defaultColorVariantIndex);
         ApplyActiveColorVariant();
-
-        activeIndex = index;
         return true;
     }
 
@@ -184,6 +185,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     void ApplyActiveColorVariant()
     {
         if (ActiveGarmentInstance == null) return;
+        if (activeIndex < 0) return;
         var entry = catalog?.garments?[activeIndex];
         if (entry == null || entry.colorVariants == null || entry.colorVariants.Count == 0) return;
 
