@@ -264,6 +264,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         {
             if (!smr) continue;
             RemapSkinnedMeshToSmpl(smr);
+            LogTopWeightInfluences(smr);
         }
     }
 
@@ -436,5 +437,78 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         return norm;
     }
+
+    void LogTopWeightInfluences(SkinnedMeshRenderer smr)
+    {
+        if (smr == null) return;
+        var mesh = smr.sharedMesh;
+        if (mesh == null) return;
+
+        // Avoid spamming: only log once per renderer instance.
+        // Use instanceID so Play Mode re-runs still log (helpful for debugging).
+        int id = smr.GetInstanceID();
+        if (_loggedWeightStats.Contains(id)) return;
+        _loggedWeightStats.Add(id);
+
+        try
+        {
+            var boneWeights = mesh.boneWeights;
+            if (boneWeights == null || boneWeights.Length == 0) return;
+
+            var bones = smr.bones;
+            int boneCount = bones != null ? bones.Length : 0;
+            if (boneCount <= 0) return;
+
+            // Accumulate absolute weight per bone index.
+            var totals = new float[boneCount];
+            float sum = 0f;
+            foreach (var bw in boneWeights)
+            {
+                Add(totals, bw.boneIndex0, bw.weight0, ref sum);
+                Add(totals, bw.boneIndex1, bw.weight1, ref sum);
+                Add(totals, bw.boneIndex2, bw.weight2, ref sum);
+                Add(totals, bw.boneIndex3, bw.weight3, ref sum);
+            }
+
+            if (sum <= 1e-6f) return;
+
+            // Find top 5 influences.
+            var top = new List<(int idx, float w)>(8);
+            for (int i = 0; i < totals.Length; i++)
+            {
+                float w = totals[i];
+                if (w <= 0f) continue;
+                top.Add((i, w));
+            }
+            top.Sort((a, b) => b.w.CompareTo(a.w));
+            int n = Mathf.Min(5, top.Count);
+
+            string msg = $"Garment weights (top {n}) for '{smr.name}': ";
+            for (int i = 0; i < n; i++)
+            {
+                int bi = top[i].idx;
+                float pct = (top[i].w / sum) * 100f;
+                string bn = (bones != null && bi >= 0 && bi < bones.Length && bones[bi] != null) ? bones[bi].name : $"boneIndex{bi}";
+                msg += $"{bn}={pct:F1}%";
+                if (i != n - 1) msg += ", ";
+            }
+
+            Debug.Log(msg, smr);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"Garment weight diagnostic failed: {ex.Message}", smr);
+        }
+    }
+
+    static void Add(float[] totals, int idx, float w, ref float sum)
+    {
+        if (idx < 0 || idx >= totals.Length) return;
+        if (w <= 0f) return;
+        totals[idx] += w;
+        sum += w;
+    }
+
+    private readonly HashSet<int> _loggedWeightStats = new();
 }
 
