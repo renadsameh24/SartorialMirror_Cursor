@@ -69,6 +69,13 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("Candidate bone names for pelvis/hips on the garment rig.")]
     public string[] garmentPelvisBoneNames = { "pelvis", "Hips", "hips", "Pelvis" };
 
+    [Header("Deformation Strategy")]
+    [Tooltip("Recommended. Keep garment skinned to its own armature and drive that armature from the scene SMPL bones each frame. Avoids bindpose mismatches that can cause 'exploding' sleeves.")]
+    public bool driveGarmentArmatureFromSmpl = true;
+
+    [Tooltip("If true, also copy bone positions (not just rotations). Usually safe for this pose-driven setup.")]
+    public bool drivePositions = true;
+
     [Header("Catalog")]
     public GarmentCatalog catalog;
 
@@ -87,6 +94,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private Transform garmentsParent;
     private Dictionary<string, Transform> smplBonesByName;
     private Transform cachedSmplPelvis;
+    private Dictionary<Transform, Transform> garmentToSmplBoneMap;
+    private Transform garmentArmatureRoot;
 
     void Awake()
     {
@@ -216,7 +225,15 @@ public sealed class SmplGarmentManager : MonoBehaviour
         ActiveGarmentInstance.transform.localRotation = Quaternion.identity;
         ActiveGarmentInstance.transform.localScale = Vector3.one;
 
-        RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
+        if (driveGarmentArmatureFromSmpl)
+        {
+            BuildGarmentArmatureDriveMap(ActiveGarmentInstance);
+        }
+        else
+        {
+            RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
+        }
+
         if (snapGarmentToSmplPelvis)
             SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
 
@@ -232,6 +249,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
     {
         activeIndex = -1;
         activeColorVariantIndex = 0;
+        garmentToSmplBoneMap = null;
+        garmentArmatureRoot = null;
         if (ActiveGarmentInstance != null)
         {
             Destroy(ActiveGarmentInstance);
@@ -287,6 +306,65 @@ public sealed class SmplGarmentManager : MonoBehaviour
             if (!smr) continue;
             RemapSkinnedMeshToSmpl(smr);
             LogTopWeightInfluences(smr);
+        }
+    }
+
+    void BuildGarmentArmatureDriveMap(GameObject garmentRoot)
+    {
+        garmentToSmplBoneMap = null;
+        garmentArmatureRoot = null;
+        if (garmentRoot == null || smplRoot == null) return;
+        if (smplBonesByName == null || smplBonesByName.Count == 0) EnsureBoneMap();
+
+        // Find garment armature root by looking at any SkinnedMeshRenderer rootBone.
+        var smr = garmentRoot.GetComponentInChildren<SkinnedMeshRenderer>(true);
+        if (smr == null || smr.rootBone == null) return;
+
+        garmentArmatureRoot = FindArmatureRoot(smr.rootBone);
+        if (garmentArmatureRoot == null) garmentArmatureRoot = smr.rootBone;
+
+        var map = new Dictionary<Transform, Transform>(1024);
+        foreach (var gt in garmentArmatureRoot.GetComponentsInChildren<Transform>(true))
+        {
+            if (gt == null) continue;
+            var key = ResolveSmplKey(gt.name);
+            if (string.IsNullOrEmpty(key)) continue;
+            if (smplBonesByName.TryGetValue(key, out var smplT) && smplT != null)
+                map[gt] = smplT;
+        }
+
+        garmentToSmplBoneMap = map.Count > 0 ? map : null;
+        if (garmentToSmplBoneMap == null)
+            Debug.LogWarning("Garment armature drive: no matching bones found between garment armature and SMPL rig.", garmentRoot);
+    }
+
+    static Transform FindArmatureRoot(Transform bone)
+    {
+        if (bone == null) return null;
+        Transform t = bone;
+        // Walk up until parent is null or name suggests it's no longer part of skeleton.
+        // In practice, the armature root is a direct child of the garment prefab root.
+        while (t.parent != null)
+        {
+            // Heuristic: stop if parent has a SkinnedMeshRenderer (we're leaving skeleton space).
+            if (t.parent.GetComponent<SkinnedMeshRenderer>() != null) break;
+            t = t.parent;
+        }
+        return t;
+    }
+
+    void LateUpdateGarmentArmatureDrive()
+    {
+        if (!driveGarmentArmatureFromSmpl) return;
+        if (garmentToSmplBoneMap == null || garmentToSmplBoneMap.Count == 0) return;
+
+        foreach (var kv in garmentToSmplBoneMap)
+        {
+            var g = kv.Key;
+            var s = kv.Value;
+            if (g == null || s == null) continue;
+            if (drivePositions) g.position = s.position;
+            g.rotation = s.rotation;
         }
     }
 
@@ -532,5 +610,23 @@ public sealed class SmplGarmentManager : MonoBehaviour
     }
 
     private readonly HashSet<int> _loggedWeightStats = new();
+
+    void LateUpdate()
+    {
+        // Keep garment armature in sync with the driven SMPL rig.
+        LateUpdateGarmentArmatureDrive();
+
+        if (!continuousPelvisSnap) return;
+        if (!snapGarmentToSmplPelvis) return;
+        if (ActiveGarmentInstance == null) return;
+        if (smplRoot == null) return;
+
+        if (cachedSmplPelvis == null)
+            cachedSmplPelvis = FindFirstByNames(smplRoot, smplPelvisBoneNames);
+
+        if (cachedSmplPelvis == null) return;
+
+        SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
+    }
 }
 
