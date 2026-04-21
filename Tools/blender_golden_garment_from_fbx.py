@@ -24,7 +24,8 @@ Optional env:
   DT_VERT_MAPPING=POLYINTERP_NEAREST   # or POLYINTERP_VNORPROJ, NEAREST, ...
   MIN_INFLUENCING_VGROUPS=8            # below this, KD-tree fallback runs
   SKIP_KD_FALLBACK=0                   # set 1 to never use KD-tree
-  FORCE_KD=1                           # always use KD-tree copy (best match to SMPL body; slower)
+  FORCE_KD=1                           # always run weight copy (BVH or VERTEX)
+  WEIGHT_COPY_METHOD=BVH               # BVH = nearest triangle on body surface (better sleeves); VERTEX = nearest body vertex
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ import os
 import sys
 
 import bpy
+from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 from mathutils.kdtree import KDTree
 
 
@@ -50,6 +53,7 @@ DT_VERT_MAPPING = os.environ.get("DT_VERT_MAPPING", "").strip() or None
 MIN_INFLUENCING_VGROUPS = int(os.environ.get("MIN_INFLUENCING_VGROUPS", "8"))
 SKIP_KD_FALLBACK = os.environ.get("SKIP_KD_FALLBACK", "0").strip() in ("1", "true", "yes", "on")
 FORCE_KD = os.environ.get("FORCE_KD", "0").strip() in ("1", "true", "yes", "on")
+WEIGHT_COPY_METHOD = os.environ.get("WEIGHT_COPY_METHOD", "BVH").strip().upper()
 
 
 def objs_by_type(t: str):
@@ -274,6 +278,125 @@ def copy_weights_nearest_body_vertex(
     garment_mesh.update()
 
 
+def _barycentric_on_triangle(p: Vector, a: Vector, b: Vector, c: Vector) -> tuple[float, float, float]:
+    """Barycentric coords of p for triangle abc (closest point from BVHTree lies on or near this triangle)."""
+    v0 = b - a
+    v1 = c - a
+    v2 = p - a
+    d00 = v0.dot(v0)
+    d01 = v0.dot(v1)
+    d02 = v0.dot(v2)
+    d11 = v1.dot(v1)
+    d12 = v1.dot(v2)
+    denom = d00 * d11 - d01 * d01
+    if abs(denom) < 1e-24:
+        return (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)
+    inv = 1.0 / denom
+    v = inv * (d11 * d02 - d01 * d12)
+    w = inv * (d00 * d12 - d01 * d02)
+    u = 1.0 - v - w
+    u = max(0.0, min(1.0, u))
+    v = max(0.0, min(1.0, v))
+    w = max(0.0, min(1.0, w))
+    s = u + v + w
+    if s < 1e-12:
+        return (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)
+    return (u / s, v / s, w / s)
+
+
+def _vert_weight_dict(mesh: bpy.types.Mesh, vi: int, idx_to_name: dict[int, str]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for ge in mesh.vertices[vi].groups:
+        gn = idx_to_name.get(ge.group)
+        if gn and ge.weight > 1e-12:
+            out[gn] = float(ge.weight)
+    return out
+
+
+def _merge_weight_dicts(parts: list[tuple[dict[str, float], float]]) -> dict[str, float]:
+    merged: dict[str, float] = {}
+    for d, bw in parts:
+        for k, val in d.items():
+            merged[k] = merged.get(k, 0.0) + val * bw
+    return merged
+
+
+def copy_weights_bvh_nearest_triangle(
+    garment: bpy.types.Object, body: bpy.types.Object, arm: bpy.types.Object
+) -> None:
+    """
+    For each garment vertex, find closest point on SMPL body mesh surface, take the hit triangle,
+    blend vertex weights from the three corners (barycentric). Better for sleeves than nearest *vertex*.
+    """
+    log("BVH: copying weights from nearest body triangle (surface / barycentric)…")
+
+    clear_vertex_groups(garment)
+    ensure_vertex_groups_for_armature_and_body(garment, arm, body)
+
+    body_mesh = body.data
+    garment_mesh = garment.data
+    mw = body.matrix_world
+    mw_g = garment.matrix_world
+
+    body_mesh.calc_loop_triangles()
+    verts = [mw @ body_mesh.vertices[i].co for i in range(len(body_mesh.vertices))]
+    polygons: list[list[int]] = [list(lt.vertices) for lt in body_mesh.loop_triangles]
+
+    if not polygons:
+        log("BVH: no loop triangles — falling back to nearest-vertex copy.")
+        copy_weights_nearest_body_vertex(garment, body, arm)
+        return
+
+    try:
+        bvhtree = BVHTree.FromPolygons(verts, polygons)
+    except Exception as e:
+        log(f"BVH: FromPolygons failed ({e}) — falling back to nearest-vertex copy.")
+        copy_weights_nearest_body_vertex(garment, body, arm)
+        return
+
+    idx_to_name = {g.index: g.name for g in body.vertex_groups}
+    name_to_garment_vg = {g.name: g for g in garment.vertex_groups}
+
+    for vi, gv in enumerate(garment_mesh.vertices):
+        co_w = mw_g @ gv.co
+        nearest = bvhtree.find_nearest(co_w)
+        if nearest is None:
+            continue
+        loc, _normal, fi, _dist = nearest
+        if fi is None or fi < 0 or fi >= len(polygons):
+            continue
+        tri = polygons[fi]
+        if len(tri) < 3:
+            continue
+        i0, i1, i2 = tri[0], tri[1], tri[2]
+        a, b, c = verts[i0], verts[i1], verts[i2]
+        u, v, w = _barycentric_on_triangle(loc, a, b, c)
+
+        d0 = _vert_weight_dict(body_mesh, i0, idx_to_name)
+        d1 = _vert_weight_dict(body_mesh, i1, idx_to_name)
+        d2 = _vert_weight_dict(body_mesh, i2, idx_to_name)
+        merged = _merge_weight_dicts([(d0, u), (d1, v), (d2, w)])
+
+        for gname, wt in merged.items():
+            if wt <= 1e-12:
+                continue
+            vg = name_to_garment_vg.get(gname)
+            if vg is None:
+                vg = garment.vertex_groups.new(name=gname)
+                name_to_garment_vg[gname] = vg
+            vg.add([vi], wt, "REPLACE")
+
+    garment_mesh.update()
+
+
+def copy_weights_post_dt(garment: bpy.types.Object, body: bpy.types.Object, arm: bpy.types.Object) -> None:
+    """Dispatch by WEIGHT_COPY_METHOD (BVH default)."""
+    if WEIGHT_COPY_METHOD == "VERTEX":
+        copy_weights_nearest_body_vertex(garment, body, arm)
+    else:
+        copy_weights_bvh_nearest_triangle(garment, body, arm)
+
+
 def limit_vertex_weights_to_four(obj: bpy.types.Object) -> None:
     """Unity SkinnedMeshRenderer uses up to 4 bones per vertex."""
     ensure_active(obj)
@@ -409,14 +532,14 @@ def run() -> int:
     use_kd = FORCE_KD or (not SKIP_KD_FALLBACK and infl < MIN_INFLUENCING_VGROUPS)
     if use_kd:
         if FORCE_KD:
-            log("FORCE_KD=1 — running KD-tree nearest-vertex weight copy (full SMPL weight projection).")
+            log(f"FORCE_KD=1 — weight copy WEIGHT_COPY_METHOD={WEIGHT_COPY_METHOD} (BVH=surface triangle, VERTEX=nearest body vert).")
         else:
             log(
-                f"Influencing groups {infl} < {MIN_INFLUENCING_VGROUPS} — running KD-tree nearest-vertex weight copy."
+                f"Influencing groups {infl} < {MIN_INFLUENCING_VGROUPS} — running weight copy ({WEIGHT_COPY_METHOD})."
             )
-        copy_weights_nearest_body_vertex(garment, body, arm)
+        copy_weights_post_dt(garment, body, arm)
         infl2 = count_influencing_vertex_groups(garment)
-        log(f"After KD-tree: influencing vertex groups = {infl2}")
+        log(f"After weight copy: influencing vertex groups = {infl2}")
 
     remove_orphan_vertex_groups_not_on_armature(garment, arm)
     normalize_weights(garment)

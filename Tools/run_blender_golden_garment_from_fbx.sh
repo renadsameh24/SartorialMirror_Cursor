@@ -53,7 +53,8 @@ echo "SMPL_FBX=$SMPL_FBX"
 echo "GARMENT_FBX=$GARMENT_FBX"
 echo "EXPORT_FBX=$EXPORT_FBX"
 echo "Blender: $BLENDER"
-# Nearest-body-vertex weight copy (recommended): set FORCE_KD=0 to skip and rely on Data Transfer only.
+# Weight copy after DT: FORCE_KD=1 runs surface transfer (default WEIGHT_COPY_METHOD=BVH for sleeves).
 export FORCE_KD="${FORCE_KD:-1}"
+export WEIGHT_COPY_METHOD="${WEIGHT_COPY_METHOD:-BVH}"
 
 exec "$BLENDER" --background --python "$REPO/Tools/blender_golden_garment_from_fbx.py"

@@ -172,7 +172,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("After a garment spawns, log one structured checklist: SMPL, FK driver, playback, skin weights, pelvis match — and what to fix next.")]
     public bool logPipelineDiagnosis = true;
 
-    [Tooltip("If fewer bones than this have non-zero weight on the garment mesh, diagnosis reports FIX MESH (typical SMPL shirt uses many bones; 2 is almost always wrong).")]
+    [Tooltip("Below this count, pipeline diagnosis logs a warning (≤1 bone is an error). A shirt can move with ~4 bones but sleeves/arms may look wrong until weights cover more SMPL bones.")]
     [Range(2, 32)]
     public int diagnosisMinHealthyInfluencingBones = 8;
 
@@ -654,9 +654,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
                             "[5/5] FIX MESH: weights use only one bone (often J00). Re-export from Blender with weights transferred from SMPL body — Tools/blender_golden_garment_from_fbx.py, then GarmentCatalog → prepared FBX.",
                             smr);
                     else if (infl < Mathf.Max(2, diagnosisMinHealthyInfluencingBones))
-                        Debug.LogError(
-                            $"[5/5] FIX MESH: only {infl} bones have weight — too few for a shirt (expect ~{diagnosisMinHealthyInfluencingBones}+ on a proper SMPL-skinned export). " +
-                            "This is the garment FBX, not spheres/remap. Re-bind / Data Transfer weights from SMPL body in Blender, re-export, update GarmentCatalog.",
+                        Debug.LogWarning(
+                            $"[5/5] Garment has only {infl} bones with any mesh weight (counts distinct bones used mesh-wide; a sleeve-heavy shirt can be OK). " +
+                            "If motion looks wrong on lower arms, re-export with Blender WEIGHT_COPY_METHOD=BVH (default) or try Recalculate Bind Poses on SmplGarmentManager.",
                             smr);
                 }
 
@@ -682,7 +682,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
 
         Debug.Log(
-            $"── Next: If [3] fails → fix SMPL/spheres first. If [3] OK but [5] infl < {diagnosisMinHealthyInfluencingBones} → fix garment FBX weights in Blender. If [5] pelvis error → armature override. ──",
+            $"── Next: If [3] fails → fix SMPL/spheres first. If [5] warns on low bone count → often OK; if arms/sleeves bad → Blender Tools/blender_golden_garment_from_fbx.py (BVH). If [5] pelvis error → armature override. ──",
             this);
     }
 
