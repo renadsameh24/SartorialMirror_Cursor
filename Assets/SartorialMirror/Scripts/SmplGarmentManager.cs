@@ -4,6 +4,48 @@ using UnityEngine;
 
 public sealed class SmplGarmentManager : MonoBehaviour
 {
+    // Maps common SMPL/humanoid bone names to this project's SMPL rig joint names (Jxx).
+    // This project’s rig uses J00.. naming (see existing scripts referencing J16/J18/etc).
+    private static readonly Dictionary<string, string> SmplAliasToJ = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Core
+        ["pelvis"] = "J00",
+        ["hips"] = "J00",
+        ["hip"] = "J00",
+        ["spine"] = "J03",
+        ["spine1"] = "J06",
+        ["spine2"] = "J09",
+        ["neck"] = "J12",
+        ["head"] = "J15",
+
+        // Legs
+        ["l_hip"] = "J01",
+        ["left_hip"] = "J01",
+        ["r_hip"] = "J02",
+        ["right_hip"] = "J02",
+        ["l_knee"] = "J04",
+        ["left_knee"] = "J04",
+        ["r_knee"] = "J05",
+        ["right_knee"] = "J05",
+        ["l_ankle"] = "J07",
+        ["left_ankle"] = "J07",
+        ["r_ankle"] = "J08",
+        ["right_ankle"] = "J08",
+
+        // Arms (matches existing pipeline scripts)
+        ["l_shoulder"] = "J16",
+        ["left_shoulder"] = "J16",
+        ["r_shoulder"] = "J17",
+        ["right_shoulder"] = "J17",
+        ["l_elbow"] = "J18",
+        ["left_elbow"] = "J18",
+        ["r_elbow"] = "J19",
+        ["right_elbow"] = "J19",
+        ["l_wrist"] = "J20",
+        ["left_wrist"] = "J20",
+        ["r_wrist"] = "J21",
+        ["right_wrist"] = "J21",
+    };
     [Header("SMPL Target")]
     [Tooltip("If empty, finds GameObject by name at runtime.")]
     public Transform smplRoot;
@@ -19,7 +61,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     public bool snapGarmentToSmplPelvis = true;
 
     [Tooltip("Candidate bone names for pelvis/hips on the SMPL rig.")]
-    public string[] smplPelvisBoneNames = { "pelvis", "Hips", "hips", "Pelvis", "J00" };
+    public string[] smplPelvisBoneNames = { "J00", "pelvis", "Hips", "hips", "Pelvis" };
 
     [Tooltip("Candidate bone names for pelvis/hips on the garment rig.")]
     public string[] garmentPelvisBoneNames = { "pelvis", "Hips", "hips", "Pelvis" };
@@ -260,8 +302,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
         else if (smr.rootBone != null)
         {
-            var normRoot = NormalizeBoneName(smr.rootBone.name);
-            if (!string.IsNullOrEmpty(normRoot) && smplBonesByName.TryGetValue(normRoot, out smplRootBone))
+            var key = ResolveSmplKey(smr.rootBone.name);
+            if (!string.IsNullOrEmpty(key) && smplBonesByName.TryGetValue(key, out smplRootBone))
             {
                 smr.rootBone = smplRootBone;
                 mappedCount++;
@@ -287,8 +329,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
             }
             else
             {
-                var norm = NormalizeBoneName(b.name);
-                if (!string.IsNullOrEmpty(norm) && smplBonesByName.TryGetValue(norm, out smplBone))
+                var key = ResolveSmplKey(b.name);
+                if (!string.IsNullOrEmpty(key) && smplBonesByName.TryGetValue(key, out smplBone))
                 {
                     bones[i] = smplBone;
                     mappedCount++;
@@ -376,6 +418,23 @@ public sealed class SmplGarmentManager : MonoBehaviour
         int colon = name.LastIndexOf(':');
         if (colon >= 0 && colon + 1 < name.Length) name = name[(colon + 1)..];
         return name;
+    }
+
+    static string ResolveSmplKey(string garmentBoneName)
+    {
+        // Try raw + normalized.
+        var norm = NormalizeBoneName(garmentBoneName);
+        if (string.IsNullOrEmpty(norm)) return "";
+
+        // If user already uses Jxx naming, return as-is.
+        if (norm.Length == 3 && (norm[0] == 'J' || norm[0] == 'j') && char.IsDigit(norm[1]) && char.IsDigit(norm[2]))
+            return norm.ToUpperInvariant();
+
+        // Alias common names → Jxx.
+        if (SmplAliasToJ.TryGetValue(norm, out var j))
+            return j;
+
+        return norm;
     }
 }
 
