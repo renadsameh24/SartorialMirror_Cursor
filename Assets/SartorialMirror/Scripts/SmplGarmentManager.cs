@@ -3,13 +3,22 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+/// <summary>Which transform defines mesh space when rebuilding inverse bind matrices after bone remap.</summary>
+public enum GarmentBindPoseReference
+{
+    /// <summary>Vertices are in SkinnedMeshRenderer.local space (Unity default for skinned meshes).</summary>
+    SkinnedMeshRendererLocal,
+    /// <summary>Use rootBone.localToWorldMatrix instead of the renderer transform (try if sleeves still stretch).</summary>
+    RootBoneWorld
+}
+
 /// <summary>
 /// Drives garment bones from scene SMPL. Runs late in the frame so SMPL bones are final before we copy them.
 /// This project’s working body setup uses only <see cref="SpheresToBones_FKDriver"/> on SMPL (see README);
-/// other IK / alternate drivers in the repo are unused experiments—execution order here is still “after default”
-/// so we follow whatever last wrote the rig (Animator + FK spheres pipeline).
+/// other IK / alternate drivers in the repo are unused experiments—execution order here is late (3200)
+/// so we run after <see cref="FollowTransform"/> (1000), FK drivers (900), and <see cref="SpheresToBones_FKDriver"/> (default).
 /// </summary>
-[DefaultExecutionOrder(1200)]
+[DefaultExecutionOrder(3200)]
 public sealed class SmplGarmentManager : MonoBehaviour
 {
     // Maps common SMPL/humanoid bone names to this project's SMPL rig joint names (Jxx).
@@ -54,6 +63,12 @@ public sealed class SmplGarmentManager : MonoBehaviour
         ["r_wrist"] = "J21",
         ["right_wrist"] = "J21",
     };
+
+    private static readonly string[] ArmChainSmplKeys =
+    {
+        "J16", "J17", "J18", "J19", "J20", "J21", "J22", "J23"
+    };
+
     [Header("SMPL Target")]
     [Tooltip("If empty, finds GameObject by name at runtime.")]
     public Transform smplRoot;
@@ -78,14 +93,35 @@ public sealed class SmplGarmentManager : MonoBehaviour
     public string[] garmentPelvisBoneNames = { "J00", "pelvis", "Hips", "hips", "Pelvis" };
 
     [Header("Deformation Strategy")]
-    [Tooltip("If OFF (default): point each SkinnedMeshRenderer bone at the scene SMPL bones by name — same skeleton MediaPipe/FK already drives (recommended). " +
-             "If ON: keep a duplicate garment armature and copy transforms each frame (older path; easier bind issues / stretch).")]
+    [Tooltip("If OFF (default): point each SkinnedMeshRenderer bone at the scene SMPL bones by name — same skeleton MediaPipe/FK already drives (recommended; works with Recalculate Bind Poses). " +
+             "If ON: duplicate garment armature + copy transforms each frame — OK for tuning, but turn OFF if you still see stretch after fixes.")]
     public bool driveGarmentArmatureFromSmpl = false;
+
+    [Tooltip("After remap, rebuild Mesh.bindposes from the SMPL bones at spawn time so sleeve/arm length matches the scene rig. " +
+             "If OFF, Unity keeps the FBX bind poses (often wrong bone lengths → stretched / very long arms).")]
+    public bool recalculateBindPosesAfterRemap = true;
+
+    [Tooltip("Bind-pose math: use SkinnedMeshRenderer local space (default), or SMPL rootBone world matrix if stretch persists.")]
+    public GarmentBindPoseReference bindPoseReference = GarmentBindPoseReference.SkinnedMeshRendererLocal;
+
+    [Header("Remap: head vs arms (shirt meshes)")]
+    [Tooltip("Many garment FBXs weight the collar to J15 (head) while sleeves use arm bones — same verts then tear between head and arms. " +
+             "When ON, verts with both head + arm influence move most J15 weight to J12 (neck), or J09 if neck is absent.")]
+    public bool decoupleHeadFromArmWeightsAfterRemap = false;
+
+    [Tooltip("Vertex must have at least this much total weight on arm chain (J16–J23) before we shift head weight.")]
+    [Range(0.01f, 0.5f)]
+    public float minArmWeightToDecoupleHead = 0.06f;
+
+    [Tooltip("Fraction of J15 weight moved to neck on qualifying verts (rest stays on head for pure collar verts).")]
+    [Range(0f, 1f)]
+    public float headWeightShiftToNeck = 0.88f;
 
     [Tooltip("If true, also copy bone positions (not just rotations). Usually NOT recommended; can stretch chains if bind poses differ.")]
     public bool drivePositions = false;
 
-    [Tooltip("If true, wrist/hand bones keep spawn pose. If the mesh has weights on those bones, leaving them undriven can distort; disable for stable full-body drive.")]
+    [Tooltip("If true, skip wrist/hand in the initial bone sweep only. Any bone with skin weights is still driven from SMPL (required or verts stretch). " +
+             "Leave false to drive the full chain including hands.")]
     public bool skipHandsAndWrists = false;
 
     [Header("Stretch Guard")]
@@ -135,6 +171,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private bool pendingBindPoseSample;
     private Coroutine garmentDriveEndOfFrameRoutine;
     private readonly List<(Transform g, Transform s, int depth)> _driveBonesSorted = new(48);
+    private readonly List<Mesh> runtimeGarmentMeshCopies = new();
 
     void Awake()
     {
@@ -336,6 +373,12 @@ public sealed class SmplGarmentManager : MonoBehaviour
             Destroy(ActiveGarmentInstance);
             ActiveGarmentInstance = null;
         }
+
+        foreach (var m in runtimeGarmentMeshCopies)
+        {
+            if (m != null) Destroy(m);
+        }
+        runtimeGarmentMeshCopies.Clear();
     }
 
     public bool TrySetColorVariant(int variantIndex)
@@ -385,6 +428,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         {
             if (!smr) continue;
             RemapSkinnedMeshToSmpl(smr);
+            smr.updateWhenOffscreen = true;
             LogTopWeightInfluences(smr);
         }
 
@@ -420,7 +464,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 map[gt] = smplT;
         }
 
-        AugmentGarmentDriveMapWithSkinWeights(smr, map);
+        var skinned = garmentRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        foreach (var sm in skinned)
+            AugmentGarmentDriveMapWithSkinWeights(sm, map);
 
         garmentToSmplBoneMap = map.Count > 0 ? map : null;
         if (garmentToSmplBoneMap == null)
@@ -481,7 +527,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
             if (map.ContainsKey(gBone)) continue;
             var key = ResolveSmplKey(gBone.name);
             if (string.IsNullOrEmpty(key)) continue;
-            if (skipHandsAndWrists && IsHandOrWrist(key)) continue;
+            // Never skip weighted wrist/hand: undriven bones + non-zero weights = huge stretch / "long tube" artifacts.
             if (smplBonesByName.TryGetValue(key, out var smplT) && smplT != null)
                 map[gBone] = smplT;
         }
@@ -678,6 +724,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         smr.bones = bones;
 
+        if (mappedCount > 0 && (recalculateBindPosesAfterRemap || decoupleHeadFromArmWeightsAfterRemap))
+            PrepareRuntimeGarmentMeshAfterRemap(smr);
+
         if (mappedCount == 0)
         {
             Debug.LogWarning(
@@ -693,6 +742,204 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 $"Garment bone remap: {smr.name} is missing {missingNames.Count} SMPL bone(s). Example: {GetFirst(missingNames)}.",
                 smr);
         }
+    }
+
+    /// <summary>
+    /// Single mesh copy after remap: optional head/arm weight fix, then bindpose rebuild.
+    /// </summary>
+    void PrepareRuntimeGarmentMeshAfterRemap(SkinnedMeshRenderer smr)
+    {
+        if (smr == null) return;
+        var src = smr.sharedMesh;
+        if (src == null) return;
+        var bones = smr.bones;
+        if (bones == null || bones.Length == 0) return;
+
+        if (recalculateBindPosesAfterRemap)
+        {
+            var oldBind = src.bindposes;
+            if (oldBind == null || oldBind.Length != bones.Length)
+            {
+                if (logMissingBoneNames)
+                    Debug.LogWarning(
+                        $"Garment bindpose rebuild skipped for '{smr.name}': mesh bindposes ({oldBind?.Length ?? 0}) vs bones ({bones.Length}).",
+                        smr);
+                if (!decoupleHeadFromArmWeightsAfterRemap)
+                    return;
+            }
+        }
+
+        var mesh = Instantiate(src);
+        mesh.name = src.name + "_garmentRuntime";
+        runtimeGarmentMeshCopies.Add(mesh);
+        smr.sharedMesh = mesh;
+
+        if (decoupleHeadFromArmWeightsAfterRemap)
+            SanitizeHeadVersusArmWeights(smr, mesh);
+
+        if (recalculateBindPosesAfterRemap && mesh.bindposes != null && mesh.bindposes.Length == bones.Length)
+            ApplyRecalculatedBindPosesToMesh(smr, mesh);
+    }
+
+    void ApplyRecalculatedBindPosesToMesh(SkinnedMeshRenderer smr, Mesh mesh)
+    {
+        var bones = smr.bones;
+        if (bones == null || bones.Length == 0 || mesh == null) return;
+
+        Matrix4x4 meshToWorld = smr.transform.localToWorldMatrix;
+        if (bindPoseReference == GarmentBindPoseReference.RootBoneWorld && smr.rootBone != null)
+            meshToWorld = smr.rootBone.localToWorldMatrix;
+
+        var newBind = new Matrix4x4[bones.Length];
+        for (int i = 0; i < bones.Length; i++)
+        {
+            var b = bones[i];
+            newBind[i] = b != null ? b.worldToLocalMatrix * meshToWorld : Matrix4x4.identity;
+        }
+        mesh.bindposes = newBind;
+    }
+
+    static int FindBoneIndexBySmplKey(Transform[] bones, string jKey)
+    {
+        if (bones == null || string.IsNullOrEmpty(jKey)) return -1;
+        for (int i = 0; i < bones.Length; i++)
+        {
+            if (bones[i] == null) continue;
+            if (string.Equals(ResolveSmplKey(bones[i].name), jKey, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+        return -1;
+    }
+
+    static void AccumulateBoneInfl(Dictionary<int, float> d, int boneIndex, float w)
+    {
+        if (boneIndex < 0 || w <= 1e-8f) return;
+        if (d.TryGetValue(boneIndex, out var o)) d[boneIndex] = o + w;
+        else d[boneIndex] = w;
+    }
+
+    static void BoneWeightToDict(in BoneWeight bw, Dictionary<int, float> d)
+    {
+        d.Clear();
+        AccumulateBoneInfl(d, bw.boneIndex0, bw.weight0);
+        AccumulateBoneInfl(d, bw.boneIndex1, bw.weight1);
+        AccumulateBoneInfl(d, bw.boneIndex2, bw.weight2);
+        AccumulateBoneInfl(d, bw.boneIndex3, bw.weight3);
+    }
+
+    static BoneWeight PackTop4BoneWeights(Dictionary<int, float> d)
+    {
+        var pairs = new List<(int idx, float w)>(8);
+        foreach (var kv in d)
+        {
+            if (kv.Value > 1e-8f) pairs.Add((kv.Key, kv.Value));
+        }
+        pairs.Sort(static (a, b) => b.w.CompareTo(a.w));
+        int n = Mathf.Min(4, pairs.Count);
+        float s = 0f;
+        for (int i = 0; i < n; i++) s += pairs[i].w;
+        if (s < 1e-8f) return default;
+
+        int b0 = pairs[0].idx;
+        float w0 = pairs[0].w / s;
+        var r = new BoneWeight { boneIndex0 = b0, weight0 = w0 };
+        if (n > 1)
+        {
+            r.boneIndex1 = pairs[1].idx;
+            r.weight1 = pairs[1].w / s;
+        }
+        if (n > 2)
+        {
+            r.boneIndex2 = pairs[2].idx;
+            r.weight2 = pairs[2].w / s;
+        }
+        if (n > 3)
+        {
+            r.boneIndex3 = pairs[3].idx;
+            r.weight3 = pairs[3].w / s;
+        }
+        return r;
+    }
+
+    void SanitizeHeadVersusArmWeights(SkinnedMeshRenderer smr, Mesh mesh)
+    {
+        var bones = smr.bones;
+        if (bones == null || bones.Length == 0) return;
+        var bws = mesh.boneWeights;
+        if (bws == null || bws.Length == 0) return;
+
+        int jHead = FindBoneIndexBySmplKey(bones, "J15");
+        int jNeck = FindBoneIndexBySmplKey(bones, "J12");
+        int jSpine2 = FindBoneIndexBySmplKey(bones, "J09");
+        int neckTarget = jNeck >= 0 ? jNeck : jSpine2;
+        if (jHead < 0 || neckTarget < 0) return;
+
+        var isArmBone = new bool[bones.Length];
+        for (int bi = 0; bi < bones.Length; bi++)
+        {
+            if (bones[bi] == null) continue;
+            var key = ResolveSmplKey(bones[bi].name);
+            for (int a = 0; a < ArmChainSmplKeys.Length; a++)
+            {
+                if (string.Equals(key, ArmChainSmplKeys[a], StringComparison.OrdinalIgnoreCase))
+                {
+                    isArmBone[bi] = true;
+                    break;
+                }
+            }
+        }
+
+        var dict = new Dictionary<int, float>(12);
+        var newBws = new BoneWeight[bws.Length];
+        float shift = Mathf.Clamp01(headWeightShiftToNeck);
+        float minArm = minArmWeightToDecoupleHead;
+
+        for (int vi = 0; vi < bws.Length; vi++)
+        {
+            BoneWeightToDict(in bws[vi], dict);
+            if (dict.Count == 0)
+            {
+                newBws[vi] = bws[vi];
+                continue;
+            }
+
+            if (!dict.TryGetValue(jHead, out var wHead) || wHead <= 1e-8f)
+            {
+                newBws[vi] = PackTop4BoneWeights(dict);
+                continue;
+            }
+
+            float wArm = 0f;
+            foreach (var kv in dict)
+            {
+                if (kv.Key >= 0 && kv.Key < isArmBone.Length && isArmBone[kv.Key])
+                    wArm += kv.Value;
+            }
+            if (wArm < minArm)
+            {
+                newBws[vi] = PackTop4BoneWeights(dict);
+                continue;
+            }
+
+            float xfer = wHead * shift;
+            dict[jHead] = wHead - xfer;
+            dict.TryGetValue(neckTarget, out var wNeck);
+            dict[neckTarget] = wNeck + xfer;
+
+            float sum = 0f;
+            foreach (var kv in dict)
+                sum += kv.Value;
+            if (sum > 1e-8f)
+            {
+                var keys = new List<int>(dict.Count);
+                foreach (var kv in dict) keys.Add(kv.Key);
+                foreach (var k in keys)
+                    dict[k] /= sum;
+            }
+            newBws[vi] = PackTop4BoneWeights(dict);
+        }
+
+        mesh.boneWeights = newBws;
     }
 
     static string GetFirst(HashSet<string> set)

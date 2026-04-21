@@ -145,10 +145,13 @@ def add_data_transfer(garment: bpy.types.Object, source_mesh: bpy.types.Object) 
     mod.use_object_transform = True
     mod.use_vert_data = True
     mod.data_types_verts = {"VGROUP_WEIGHTS"}
-    try:
-        mod.vert_mapping = "POLYINTERP_NEAREST"
-    except TypeError:
-        mod.vert_mapping = "NEAREST"
+    # POLYINTERP_VNORPROJ: interpolated along projected normals — usually smoother sleeves than POLYINTERP_NEAREST.
+    for mapping in ("POLYINTERP_VNORPROJ", "POLYINTERP_NEAREST", "NEAREST"):
+        try:
+            mod.vert_mapping = mapping
+            break
+        except TypeError:
+            continue
     mod.mix_mode = "REPLACE"
     mod.mix_factor = 1.0
     return mod
