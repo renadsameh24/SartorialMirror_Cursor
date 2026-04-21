@@ -79,6 +79,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("Optional parent under SMPL root to keep garments organized.")]
     public string garmentsParentName = "_Garments";
 
+    [Tooltip("Direct child (or descendant) name of the driven SMPL skeleton — NOT the garment copy. " +
+             "Bone lookups use ONLY this subtree so duplicate J-bones under _Garments never win (frozen shirt).")]
+    public string smplArmatureRootName = "SMPL_Armature";
+
     [Header("Alignment")]
     [Tooltip("If true, after spawning we snap the garment to the SMPL pelvis/hips to correct FBX root offsets.")]
     public bool snapGarmentToSmplPelvis = true;
@@ -287,13 +291,89 @@ public sealed class SmplGarmentManager : MonoBehaviour
     }
 
     /// <summary>
-    /// When true, ignores bones under <see cref="garmentsParent"/> so duplicate armatures on spawned garments
-    /// never shadow the real SMPL bones (would freeze the shirt or map to wrong transforms).
+    /// Prefer the real SMPL armature subtree only (see <see cref="smplArmatureRootName"/>).
+    /// That guarantees duplicate J-bones on the spawned garment FBX never shadow the driven SMPL bones (classic “shirt frozen”).
     /// </summary>
     void EnsureBoneMapExcludingGarments()
     {
         EnsureGarmentsParent();
+        smplBonesByName = new Dictionary<string, Transform>(StringComparer.Ordinal);
+        if (smplRoot == null) return;
+
+        var armatureRoot = FindSmplDrivenArmatureRoot();
+        if (armatureRoot != null)
+        {
+            foreach (var t in armatureRoot.GetComponentsInChildren<Transform>(true))
+                AddBoneNameEntry(t);
+
+            if (logMissingBoneNames)
+                Debug.Log(
+                    $"[SmplGarmentManager] SMPL bone map built from '{armatureRoot.name}' only: {smplBonesByName.Count} name keys.",
+                    this);
+
+            if (smplBonesByName.Count < 12 && logSpawnFailures)
+                Debug.LogWarning(
+                    $"[SmplGarmentManager] Few bones mapped ({smplBonesByName.Count}). Check that '{smplArmatureRootName}' exists under '{smplRoot.name}'.",
+                    this);
+            return;
+        }
+
+        if (logSpawnFailures)
+            Debug.LogWarning(
+                $"[SmplGarmentManager] Armature '{smplArmatureRootName}' not found under '{smplRoot.name}'. " +
+                "Falling back to full SMPL root minus _Garments (may mis-resolve if duplicate J-bones exist).",
+                this);
+
         EnsureBoneMapInternal(excludeTransformsUnderGarmentsParent: true);
+    }
+
+    Transform FindSmplDrivenArmatureRoot()
+    {
+        if (smplRoot == null) return null;
+
+        // Try user name first, then common FBX import names (Unity may rename SMPL_Armature → Armature).
+        var candidates = new List<string>(4);
+        if (!string.IsNullOrEmpty(smplArmatureRootName))
+            candidates.Add(smplArmatureRootName);
+        foreach (var n in new[] { "SMPL_Armature", "Armature", "SMPL" })
+        {
+            if (!candidates.Contains(n))
+                candidates.Add(n);
+        }
+
+        foreach (var name in candidates)
+        {
+            var direct = smplRoot.Find(name);
+            if (direct != null && !IsTransformUnderGarments(direct))
+                return direct;
+
+            foreach (var t in smplRoot.GetComponentsInChildren<Transform>(true))
+            {
+                if (t == null || t == smplRoot) continue;
+                if (IsTransformUnderGarments(t)) continue;
+                if (string.Equals(t.name, name, StringComparison.Ordinal))
+                    return t;
+            }
+        }
+
+        return null;
+    }
+
+    bool IsTransformUnderGarments(Transform t)
+    {
+        if (t == null || garmentsParent == null) return false;
+        return t == garmentsParent || t.IsChildOf(garmentsParent);
+    }
+
+    void AddBoneNameEntry(Transform t)
+    {
+        if (!t) return;
+        var raw = t.name;
+        var norm = NormalizeBoneName(raw);
+        if (!smplBonesByName.ContainsKey(raw))
+            smplBonesByName.Add(raw, t);
+        if (!string.IsNullOrEmpty(norm) && !smplBonesByName.ContainsKey(norm))
+            smplBonesByName.Add(norm, t);
     }
 
     void EnsureBoneMapInternal(bool excludeTransformsUnderGarmentsParent)
@@ -306,13 +386,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
             if (!t) continue;
             if (excludeTransformsUnderGarmentsParent && garmentsParent != null && t != garmentsParent && t.IsChildOf(garmentsParent))
                 continue;
-            // Add both raw and normalized keys to tolerate FBX importer prefixes.
-            var raw = t.name;
-            var norm = NormalizeBoneName(raw);
-            if (!smplBonesByName.ContainsKey(raw))
-                smplBonesByName.Add(raw, t);
-            if (!string.IsNullOrEmpty(norm) && !smplBonesByName.ContainsKey(norm))
-                smplBonesByName.Add(norm, t);
+            AddBoneNameEntry(t);
         }
     }
 
@@ -469,7 +543,13 @@ public sealed class SmplGarmentManager : MonoBehaviour
     {
         if (garmentRoot == null) return;
         EnsureBoneMapExcludingGarments();
-        if (smplBonesByName == null || smplBonesByName.Count == 0) return;
+        if (smplBonesByName == null || smplBonesByName.Count == 0)
+        {
+            Debug.LogError(
+                "[SmplGarmentManager] SMPL bone map is empty — cannot remap garment. Check smplRoot and smplArmatureRootName (e.g. SMPL_Armature).",
+                this);
+            return;
+        }
 
         var skinned = garmentRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
         foreach (var smr in skinned)
@@ -792,7 +872,28 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
 
         if (mappedCount > 0)
+        {
+            ValidateRemappedBonesAreSceneSmpl(smr);
             RefreshSkinnedRendererAfterBoneRemap(smr);
+        }
+    }
+
+    void ValidateRemappedBonesAreSceneSmpl(SkinnedMeshRenderer smr)
+    {
+        if (smr == null || smr.bones == null || garmentsParent == null) return;
+        foreach (var b in smr.bones)
+        {
+            if (b == null) continue;
+            if (b == garmentsParent || b.IsChildOf(garmentsParent))
+            {
+                Debug.LogError(
+                    $"[SmplGarmentManager] Skinned mesh still references bones under '{garmentsParentName}' ({b.name}). " +
+                    "Remap resolved to the duplicate garment armature, not scene SMPL — shirt will not move. " +
+                    "Confirm Smpl Armature Root Name matches the driven rig (default: SMPL_Armature).",
+                    smr);
+                return;
+            }
+        }
     }
 
     /// <summary>
