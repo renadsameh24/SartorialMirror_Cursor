@@ -16,7 +16,7 @@ public enum GarmentBindPoseReference
 /// Drives garment bones from scene SMPL. Runs late in the frame so SMPL bones are final before we copy them.
 /// This project’s working body setup uses only <see cref="SpheresToBones_FKDriver"/> on SMPL (see README);
 /// other IK / alternate drivers in the repo are unused experiments—execution order here is late (3200)
-/// so we run after <see cref="FollowTransform"/> (1000), FK drivers (900), and <see cref="SpheresToBones_FKDriver"/> (default).
+/// so we run after <see cref="SpheresToBones_FKDriver"/> (2500), <see cref="FollowTransform"/> (1000), etc.
 /// </summary>
 [DefaultExecutionOrder(3200)]
 public sealed class SmplGarmentManager : MonoBehaviour
@@ -959,6 +959,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
             ValidateRemappedBonesAreSceneSmpl(smr);
             ValidateRemappedPelvisMatchesFkDriver(smr);
             RefreshSkinnedRendererAfterBoneRemap(smr);
+            ExpandLocalBoundsForExternalSkinnedBones(smr);
         }
     }
 
@@ -1019,6 +1020,27 @@ public sealed class SmplGarmentManager : MonoBehaviour
         bool e = smr.enabled;
         smr.enabled = false;
         smr.enabled = e;
+    }
+
+    /// <summary>
+    /// After remap, <see cref="SkinnedMeshRenderer.bones"/> point at SMPL (not under the garment renderer).
+    /// Unity may compute tiny <see cref="SkinnedMeshRenderer.localBounds"/>, which breaks culling / skin updates in some cases.
+    /// </summary>
+    static void ExpandLocalBoundsForExternalSkinnedBones(SkinnedMeshRenderer smr)
+    {
+        if (smr == null || smr.rootBone == null) return;
+        if (smr.rootBone.IsChildOf(smr.transform)) return;
+
+        var b = smr.localBounds;
+        const float minHalfAxis = 0.65f;
+        var ext = b.extents;
+        if (ext.x < minHalfAxis || ext.y < minHalfAxis || ext.z < minHalfAxis)
+        {
+            ext.x = Mathf.Max(ext.x, minHalfAxis);
+            ext.y = Mathf.Max(ext.y, minHalfAxis * 2.2f);
+            ext.z = Mathf.Max(ext.z, minHalfAxis);
+            smr.localBounds = new Bounds(b.center, ext * 2f);
+        }
     }
 
     /// <summary>

@@ -1,6 +1,11 @@
 using System;
 using UnityEngine;
 
+/// <summary>
+/// Runs after default Animators (0) and after sphere-follow (≈1000) so sphere-driven rotations win.
+/// Must finish before <see cref="SmplGarmentManager"/> (3200) so SMPL bones are final for garment skinning.
+/// </summary>
+[DefaultExecutionOrder(2500)]
 public class SpheresToBones_FKDriver : MonoBehaviour
 {
     [Serializable]
