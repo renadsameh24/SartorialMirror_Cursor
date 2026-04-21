@@ -14,6 +14,16 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("Optional parent under SMPL root to keep garments organized.")]
     public string garmentsParentName = "_Garments";
 
+    [Header("Alignment")]
+    [Tooltip("If true, after spawning we snap the garment to the SMPL pelvis/hips to correct FBX root offsets.")]
+    public bool snapGarmentToSmplPelvis = true;
+
+    [Tooltip("Candidate bone names for pelvis/hips on the SMPL rig.")]
+    public string[] smplPelvisBoneNames = { "pelvis", "Hips", "hips", "Pelvis", "J00" };
+
+    [Tooltip("Candidate bone names for pelvis/hips on the garment rig.")]
+    public string[] garmentPelvisBoneNames = { "pelvis", "Hips", "hips", "Pelvis" };
+
     [Header("Catalog")]
     public GarmentCatalog catalog;
 
@@ -138,6 +148,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
         ActiveGarmentInstance.transform.localScale = Vector3.one;
 
         RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
+        if (snapGarmentToSmplPelvis)
+            SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
 
         // Set active index before applying variants (ApplyActiveColorVariant reads activeIndex).
         activeIndex = index;
@@ -206,6 +218,28 @@ public sealed class SmplGarmentManager : MonoBehaviour
             if (!smr) continue;
             RemapSkinnedMeshToSmpl(smr);
         }
+    }
+
+    void SnapGarmentRootToSmplPelvis(GameObject garmentRoot)
+    {
+        if (garmentRoot == null || smplRoot == null) return;
+
+        var smplPelvis = FindFirstByNames(smplRoot, smplPelvisBoneNames);
+        var garmentPelvis = FindFirstByNames(garmentRoot.transform, garmentPelvisBoneNames);
+
+        // If garment doesn't expose pelvis/hips as a Transform, try the rootBone of any SkinnedMeshRenderer.
+        if (garmentPelvis == null)
+        {
+            var smr = garmentRoot.GetComponentInChildren<SkinnedMeshRenderer>(true);
+            if (smr != null && smr.rootBone != null)
+                garmentPelvis = smr.rootBone;
+        }
+
+        if (smplPelvis == null || garmentPelvis == null) return;
+
+        // Move the whole instance so garment pelvis coincides with SMPL pelvis.
+        Vector3 delta = smplPelvis.position - garmentPelvis.position;
+        garmentRoot.transform.position += delta;
     }
 
     void RemapSkinnedMeshToSmpl(SkinnedMeshRenderer smr)
@@ -294,6 +328,22 @@ public sealed class SmplGarmentManager : MonoBehaviour
         if (dict == null) return "";
         foreach (var kv in dict) return kv.Key;
         return "";
+    }
+
+    static Transform FindFirstByNames(Transform root, string[] names)
+    {
+        if (root == null || names == null || names.Length == 0) return null;
+
+        foreach (var t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t == null) continue;
+            for (int i = 0; i < names.Length; i++)
+            {
+                if (t.name == names[i]) return t;
+            }
+        }
+
+        return null;
     }
 }
 
