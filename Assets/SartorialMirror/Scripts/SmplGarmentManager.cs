@@ -176,8 +176,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     void Awake()
     {
         EnsureSmplRoot();
-        EnsureBoneMap();
-        EnsureGarmentsParent();
+        EnsureBoneMapExcludingGarments();
         cachedSmplPelvis = FindFirstByNames(smplRoot, smplPelvisBoneNames);
     }
 
@@ -236,9 +235,28 @@ public sealed class SmplGarmentManager : MonoBehaviour
     {
         if (smplRoot != null) return true;
         var go = GameObject.Find(smplRootName);
+        if (go == null)
+            go = FindSceneObjectByNameIncludingInactive(smplRootName);
         if (go == null) return false;
         smplRoot = go.transform;
         return true;
+    }
+
+    /// <summary>GameObject.Find only sees active objects; SMPL may be inactive on first frame.</summary>
+    static GameObject FindSceneObjectByNameIncludingInactive(string objectName)
+    {
+        if (string.IsNullOrEmpty(objectName)) return null;
+        var transforms = Resources.FindObjectsOfTypeAll<Transform>();
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            var t = transforms[i];
+            if (t == null) continue;
+            if (t.name != objectName) continue;
+            var go = t.gameObject;
+            if (go != null && go.scene.IsValid())
+                return go;
+        }
+        return null;
     }
 
     void EnsureGarmentsParent()
@@ -264,12 +282,29 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     void EnsureBoneMap()
     {
+        EnsureBoneMapInternal(excludeTransformsUnderGarmentsParent: false);
+    }
+
+    /// <summary>
+    /// When true, ignores bones under <see cref="garmentsParent"/> so duplicate armatures on spawned garments
+    /// never shadow the real SMPL bones (would freeze the shirt or map to wrong transforms).
+    /// </summary>
+    void EnsureBoneMapExcludingGarments()
+    {
+        EnsureGarmentsParent();
+        EnsureBoneMapInternal(excludeTransformsUnderGarmentsParent: true);
+    }
+
+    void EnsureBoneMapInternal(bool excludeTransformsUnderGarmentsParent)
+    {
         smplBonesByName = new Dictionary<string, Transform>(StringComparer.Ordinal);
         if (smplRoot == null) return;
 
         foreach (var t in smplRoot.GetComponentsInChildren<Transform>(true))
         {
             if (!t) continue;
+            if (excludeTransformsUnderGarmentsParent && garmentsParent != null && t != garmentsParent && t.IsChildOf(garmentsParent))
+                continue;
             // Add both raw and normalized keys to tolerate FBX importer prefixes.
             var raw = t.name;
             var norm = NormalizeBoneName(raw);
@@ -290,8 +325,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 Debug.LogWarning($"Garment spawn failed: SMPL root '{smplRootName}' not found in scene.", this);
             return false;
         }
-        EnsureBoneMap();
-        EnsureGarmentsParent();
+        EnsureBoneMapExcludingGarments();
 
         if (catalog == null || catalog.garments == null)
         {
@@ -340,16 +374,27 @@ public sealed class SmplGarmentManager : MonoBehaviour
         if (snapGarmentToSmplPelvis)
             SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
 
-        if (driveGarmentArmatureFromSmpl)
+        // Drive mode with an empty map leaves bones on the prefab armature while we disable Animators → frozen mesh.
+        bool useArmatureDrive = driveGarmentArmatureFromSmpl;
+        if (useArmatureDrive)
         {
             BuildGarmentArmatureDriveMap(ActiveGarmentInstance);
-        }
-        else
-        {
-            RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
+            if (garmentToSmplBoneMap == null || garmentToSmplBoneMap.Count == 0)
+            {
+                useArmatureDrive = false;
+                if (logSpawnFailures)
+                    Debug.LogWarning(
+                        "SmplGarmentManager: Drive Garment Armature From SMPL is ON but no SMPL bone pairs were found " +
+                        "(names must match scene SMPL). Falling back to remap mode so the garment can move. " +
+                        "Turn Drive OFF in the Inspector or fix bone names.",
+                        ActiveGarmentInstance);
+            }
         }
 
-        pendingBindPoseSample = driveGarmentArmatureFromSmpl && useBindPoseRotationOffset && garmentToSmplBoneMap != null;
+        if (!useArmatureDrive)
+            RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
+
+        pendingBindPoseSample = useArmatureDrive && useBindPoseRotationOffset && garmentToSmplBoneMap != null;
 
         // Set active index before applying variants (ApplyActiveColorVariant reads activeIndex).
         activeIndex = index;
@@ -421,7 +466,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     void RemapAllSkinnedMeshesToSmpl(GameObject garmentRoot)
     {
-        if (garmentRoot == null || smplBonesByName == null) return;
+        if (garmentRoot == null) return;
+        EnsureBoneMapExcludingGarments();
+        if (smplBonesByName == null || smplBonesByName.Count == 0) return;
 
         var skinned = garmentRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
         foreach (var smr in skinned)
@@ -444,7 +491,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         garmentArmatureRoot = null;
         garmentBoneMaxDistance.Clear();
         if (garmentRoot == null || smplRoot == null) return;
-        if (smplBonesByName == null || smplBonesByName.Count == 0) EnsureBoneMap();
+        if (smplBonesByName == null || smplBonesByName.Count == 0) EnsureBoneMapExcludingGarments();
 
         // Find garment armature root by looking at any SkinnedMeshRenderer rootBone.
         var smr = garmentRoot.GetComponentInChildren<SkinnedMeshRenderer>(true);
@@ -797,6 +844,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
             newBind[i] = b != null ? b.worldToLocalMatrix * meshToWorld : Matrix4x4.identity;
         }
         mesh.bindposes = newBind;
+        mesh.RecalculateBounds();
     }
 
     static int FindBoneIndexBySmplKey(Transform[] bones, string jKey)
