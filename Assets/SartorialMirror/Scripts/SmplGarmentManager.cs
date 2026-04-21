@@ -102,8 +102,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
     public bool useBindPoseRotationOffset = false;
 
     [Tooltip("If true, copy bone rotations in a WaitForEndOfFrame coroutine so SpheresToBones_FKDriver + Animator finish first. " +
-             "Try this when arms/sleeves explode: LateUpdate can run before the rig’s final pose for this frame.")]
-    public bool applyGarmentDriveAtEndOfFrame = true;
+             "Off by default: if the coroutine fails to start, the garment would not move. Turn on only when debugging arm spikes.")]
+    public bool applyGarmentDriveAtEndOfFrame = false;
 
     [Header("Catalog")]
     public GarmentCatalog catalog;
@@ -141,8 +141,22 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     void OnEnable()
     {
-        if (applyGarmentDriveAtEndOfFrame && garmentDriveEndOfFrameRoutine == null)
-            garmentDriveEndOfFrameRoutine = StartCoroutine(CoApplyGarmentDriveEndOfFrame());
+        TryStartEndOfFrameGarmentDrive();
+    }
+
+    void Start()
+    {
+        // AddComponent during another Awake can skip OnEnable timing; ensure EOF drive still starts when enabled.
+        TryStartEndOfFrameGarmentDrive();
+    }
+
+    void TryStartEndOfFrameGarmentDrive()
+    {
+        if (!applyGarmentDriveAtEndOfFrame || garmentDriveEndOfFrameRoutine != null)
+            return;
+        if (!isActiveAndEnabled)
+            return;
+        garmentDriveEndOfFrameRoutine = StartCoroutine(CoApplyGarmentDriveEndOfFrame());
     }
 
     void OnDisable()
@@ -157,11 +171,20 @@ public sealed class SmplGarmentManager : MonoBehaviour
     IEnumerator CoApplyGarmentDriveEndOfFrame()
     {
         var wait = new WaitForEndOfFrame();
-        while (enabled)
+        while (isActiveAndEnabled)
         {
             yield return wait;
-            if (applyGarmentDriveAtEndOfFrame && driveGarmentArmatureFromSmpl && ActiveGarmentInstance != null)
-                ApplyGarmentArmatureDrive();
+            if (!applyGarmentDriveAtEndOfFrame)
+                continue;
+            try
+            {
+                if (driveGarmentArmatureFromSmpl && ActiveGarmentInstance != null)
+                    ApplyGarmentArmatureDrive();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, this);
+            }
         }
     }
 
