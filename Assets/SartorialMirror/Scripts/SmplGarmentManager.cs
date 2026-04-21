@@ -82,6 +82,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
              "If ON: keep a duplicate garment armature and copy transforms each frame (older path; easier bind issues / stretch).")]
     public bool driveGarmentArmatureFromSmpl = false;
 
+    [Tooltip("After remap, rebuild Mesh.bindposes from the SMPL bones at spawn time so sleeve/arm length matches the scene rig. " +
+             "If OFF, Unity keeps the FBX bind poses (often wrong bone lengths → stretched / very long arms).")]
+    public bool recalculateBindPosesAfterRemap = true;
+
     [Tooltip("If true, also copy bone positions (not just rotations). Usually NOT recommended; can stretch chains if bind poses differ.")]
     public bool drivePositions = false;
 
@@ -135,6 +139,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private bool pendingBindPoseSample;
     private Coroutine garmentDriveEndOfFrameRoutine;
     private readonly List<(Transform g, Transform s, int depth)> _driveBonesSorted = new(48);
+    private readonly List<Mesh> runtimeGarmentMeshCopies = new();
 
     void Awake()
     {
@@ -336,6 +341,12 @@ public sealed class SmplGarmentManager : MonoBehaviour
             Destroy(ActiveGarmentInstance);
             ActiveGarmentInstance = null;
         }
+
+        foreach (var m in runtimeGarmentMeshCopies)
+        {
+            if (m != null) Destroy(m);
+        }
+        runtimeGarmentMeshCopies.Clear();
     }
 
     public bool TrySetColorVariant(int variantIndex)
@@ -678,6 +689,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         smr.bones = bones;
 
+        if (recalculateBindPosesAfterRemap && mappedCount > 0)
+            RecalculateBindPosesForRemappedSkinnedMesh(smr);
+
         if (mappedCount == 0)
         {
             Debug.LogWarning(
@@ -693,6 +707,42 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 $"Garment bone remap: {smr.name} is missing {missingNames.Count} SMPL bone(s). Example: {GetFirst(missingNames)}.",
                 smr);
         }
+    }
+
+    /// <summary>
+    /// Bone remap swaps transforms; the mesh still carries inverse bind matrices from the garment FBX.
+    /// Recompute bindposes from the current (SMPL) bone rest transforms so arm/chain length matches the driven rig.
+    /// </summary>
+    void RecalculateBindPosesForRemappedSkinnedMesh(SkinnedMeshRenderer smr)
+    {
+        if (smr == null) return;
+        var src = smr.sharedMesh;
+        if (src == null) return;
+        var bones = smr.bones;
+        if (bones == null || bones.Length == 0) return;
+        var oldBind = src.bindposes;
+        if (oldBind == null || oldBind.Length != bones.Length)
+        {
+            if (logMissingBoneNames)
+                Debug.LogWarning(
+                    $"Garment bindpose rebuild skipped for '{smr.name}': mesh bindposes ({oldBind?.Length ?? 0}) vs bones ({bones.Length}).",
+                    smr);
+            return;
+        }
+
+        var mesh = Instantiate(src);
+        mesh.name = src.name + "_remapBind";
+        runtimeGarmentMeshCopies.Add(mesh);
+        smr.sharedMesh = mesh;
+
+        var meshToWorld = smr.transform.localToWorldMatrix;
+        var newBind = new Matrix4x4[bones.Length];
+        for (int i = 0; i < bones.Length; i++)
+        {
+            var b = bones[i];
+            newBind[i] = b != null ? b.worldToLocalMatrix * meshToWorld : Matrix4x4.identity;
+        }
+        mesh.bindposes = newBind;
     }
 
     static string GetFirst(HashSet<string> set)
