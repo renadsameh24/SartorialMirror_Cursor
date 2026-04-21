@@ -360,7 +360,7 @@ After importing a new garment FBX, its **Model Import** settings must match the 
 
 Recommended automated prep (weights copied from SMPL body mesh, then export):
 
-- **From two FBXs (SMPL + raw shirt), no .blend file:** run `Tools/blender_golden_garment_from_fbx.py` with `SMPL_FBX`, `GARMENT_FBX`, `EXPORT_FBX` set to absolute paths (see script header). This overwrites `Assets/garments_prepared/Flannel_SMPL_Skinned.fbx` when you point `EXPORT_FBX` there; reopen Unity to reimport.
+- **From two FBXs (SMPL + raw shirt), no .blend file:** run `./Tools/run_blender_golden_garment_from_fbx.sh /abs/path/shirt.fbx` or set `SMPL_FBX`, `GARMENT_FBX`, `EXPORT_FBX` and run `Tools/blender_golden_garment_from_fbx.py` in Blender (see script header). The script pre-creates **vertex groups** for all SMPL deform bones, runs **Data Transfer** (`POLYINTERP_NEAREST` first), optionally **KD-tree nearest-vertex** weight copy (`FORCE_KD=1`, default in the shell helper), **normalizes**, **limits to 4 influences** (Unity), then exports. If Unity still reports “only 2 bones,” the catalog prefab is probably still pointing at an **old** FBX — link `Assets/garments_prepared/Flannel_SMPL_Skinned.fbx` in **GarmentCatalog** and reimport.
 - **From an existing Blender scene:** run `Tools/blender_golden_garment_prep.py` (see script header for `MODE=INSPECT` and env vars).
 
 Point `GarmentCatalog` at the prepared FBX under `Assets/garments_prepared/` (already wired for `Flannel_SMPL_Skinned.fbx`).
