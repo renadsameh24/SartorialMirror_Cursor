@@ -12,6 +12,16 @@ Optional env vars:
   EXPORT_FBX=/full/path/out.fbx
 
 Note: Applying the Data Transfer modifier removes that modifier by design (weights are baked).
+
+Unity import parity (must match SMPL_neutral_rig_GOLDEN.fbx in this repo):
+  - Model > Scale Factor (globalScale): 100
+  - Optimize Bones: 0 (off)
+  - Import the new FBX and set the same values, or the garment will look wrong height / scale next to SMPL.
+
+Scene setup in Blender:
+  - Use ONE SMPL armature exported from this Unity project (same units/rest pose as in-game).
+  - Fit the garment mesh to that body; Data Transfer vertex weights from the SMPL body mesh so sleeves/neck follow SMPL deformation.
+  - Do not depend on IK/constraints for export — only armature + vertex weights matter in Unity.
 """
 
 from __future__ import annotations

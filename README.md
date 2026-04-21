@@ -348,6 +348,22 @@ Open Blender and:
 - confirm the body mesh and armature are present
 - use that as the base file for garment preparation
 
+### New garment FBX must match SMPL in Unity (scale and rig)
+
+If you only revert C# but keep the same garment FBX, **nothing visible will change** — the mesh, weights, and bind pose are the asset.
+
+After importing a new garment FBX, its **Model Import** settings must match the SMPL reference (`Assets/SMPL/Models/SMPL_neutral_rig_GOLDEN.fbx`):
+
+- **Scale Factor** (Meshes): **100** — same as SMPL in this project. Wrong scale = shirt looks short/tiny/wrong height next to the body.
+- **Optimize Bones**: **0** (disabled) — matches SMPL; avoids bone-index surprises with skinning.
+- **Rig**: use the imported armature from the garment FBX, or remap in Unity only if bone names are identical to `J00`…`J23` style used on scene SMPL.
+
+Recommended automated prep (weights copied from SMPL body mesh, then export):
+
+- Run `Tools/blender_golden_garment_prep.py` (see script header for `MODE=INSPECT` and env vars). Point `GarmentCatalog` at the new FBX/prefab under e.g. `Assets/garments_prepared/`.
+
+In Blender, avoid relying on **IK/constraints** for the final bind — Unity uses the exported rest pose and skin weights; parent the shirt to the SMPL armature with **Armature Deform** after weights are baked.
+
 ---
 
 ## Recommended Blender Garment Base Workflow
