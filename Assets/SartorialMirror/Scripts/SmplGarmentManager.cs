@@ -2,6 +2,11 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
+/// <summary>
+/// Drives garment bones from scene SMPL. Runs late in the frame so arm/torso bones updated by
+/// SmplFullBodyBoneDriverV4 / FK drivers (default order 0–900) are final before we copy them.
+/// </summary>
+[DefaultExecutionOrder(1200)]
 public sealed class SmplGarmentManager : MonoBehaviour
 {
     // Maps common SMPL/humanoid bone names to this project's SMPL rig joint names (Jxx).
@@ -89,8 +94,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("If true, drive garment bones using world rotation (more stable than localRotation when bind poses differ).")]
     public bool driveWorldRotation = true;
 
-    [Tooltip("If true (recommended), each frame applies g.rotation = s.rotation * offset where offset encodes rest/bind difference between garment and scene SMPL. " +
-             "Without this, copying s.rotation onto g ignores bind mismatch and often causes spiking/deformed cloth.")]
+    [Tooltip("If true (recommended), each frame applies g.rotation = (g_bind * Inv(s_bind)) * s_live so garment bind pose vs SMPL bind is preserved while tracking. " +
+             "Offset is sampled on the first LateUpdate after spawn so SMPL arm drivers have already run this frame.")]
     public bool useBindPoseRotationOffset = true;
 
     [Header("Catalog")]
@@ -114,7 +119,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private Dictionary<Transform, Transform> garmentToSmplBoneMap;
     private Transform garmentArmatureRoot;
     private readonly Dictionary<Transform, float> garmentBoneMaxDistance = new();
-    private readonly Dictionary<Transform, Quaternion> bindWorldRotOffset = new();
+    /// <summary>Per bone: k = g.rotation * Inv(s.rotation) at bind sample, then g = k * s each frame.</summary>
+    private readonly Dictionary<Transform, Quaternion> bindRotLeftMul = new();
+    private bool pendingBindPoseSample;
 
     void Awake()
     {
@@ -243,6 +250,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
             RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
         }
 
+        pendingBindPoseSample = driveGarmentArmatureFromSmpl && useBindPoseRotationOffset && garmentToSmplBoneMap != null;
+
         // Set active index before applying variants (ApplyActiveColorVariant reads activeIndex).
         activeIndex = index;
 
@@ -258,7 +267,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
         garmentToSmplBoneMap = null;
         garmentArmatureRoot = null;
         garmentBoneMaxDistance.Clear();
-        bindWorldRotOffset.Clear();
+        bindRotLeftMul.Clear();
+        pendingBindPoseSample = false;
         if (ActiveGarmentInstance != null)
         {
             Destroy(ActiveGarmentInstance);
@@ -361,19 +371,17 @@ public sealed class SmplGarmentManager : MonoBehaviour
             }
         }
 
-        if (useBindPoseRotationOffset && garmentToSmplBoneMap != null)
-            RecordBindPoseRotationOffsets();
     }
 
     void RecordBindPoseRotationOffsets()
     {
-        bindWorldRotOffset.Clear();
+        bindRotLeftMul.Clear();
         foreach (var kv in garmentToSmplBoneMap)
         {
             var g = kv.Key;
             var s = kv.Value;
             if (g == null || s == null) continue;
-            bindWorldRotOffset[g] = Quaternion.Inverse(s.rotation) * g.rotation;
+            bindRotLeftMul[g] = g.rotation * Quaternion.Inverse(s.rotation);
         }
     }
 
@@ -432,6 +440,12 @@ public sealed class SmplGarmentManager : MonoBehaviour
         if (!driveGarmentArmatureFromSmpl) return;
         if (garmentToSmplBoneMap == null || garmentToSmplBoneMap.Count == 0) return;
 
+        if (pendingBindPoseSample && useBindPoseRotationOffset)
+        {
+            RecordBindPoseRotationOffsets();
+            pendingBindPoseSample = false;
+        }
+
         foreach (var kv in garmentToSmplBoneMap)
         {
             var g = kv.Key;
@@ -441,8 +455,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
             if (driveWorldRotation)
             {
-                if (useBindPoseRotationOffset && bindWorldRotOffset.TryGetValue(g, out var off))
-                    g.rotation = s.rotation * off;
+                if (useBindPoseRotationOffset && bindRotLeftMul.TryGetValue(g, out var k))
+                    g.rotation = k * s.rotation;
                 else
                     g.rotation = s.rotation;
             }
