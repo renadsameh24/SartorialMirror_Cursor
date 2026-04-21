@@ -169,6 +169,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
     public bool logMissingBoneNames = true;
     public bool logSpawnFailures = true;
 
+    [Tooltip("After a garment spawns, log one structured checklist: SMPL, FK driver, playback, skin weights, pelvis match — and what to fix next.")]
+    public bool logPipelineDiagnosis = true;
+
     private Transform garmentsParent;
     private Dictionary<string, Transform> smplBonesByName;
     private Transform cachedSmplPelvis;
@@ -559,7 +562,203 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         activeColorVariantIndex = Mathf.Max(0, entry.defaultColorVariantIndex);
         ApplyActiveColorVariant();
+        LogPipelineDiagnosisAfterSpawn();
         return true;
+    }
+
+    [ContextMenu("Log pipeline diagnosis (Play Mode)")]
+    public void LogPipelineDiagnosisFromContextMenu()
+    {
+        if (!Application.isPlaying)
+        {
+            Debug.Log("[SmplGarmentManager] Enter Play Mode, then run this again.", this);
+            return;
+        }
+
+        LogPipelineDiagnosis();
+    }
+
+    void LogPipelineDiagnosisAfterSpawn()
+    {
+        if (!logPipelineDiagnosis) return;
+        LogPipelineDiagnosis();
+    }
+
+    /// <summary>
+    /// One console block: what works, what blocks motion, and the next fix (body pose vs garment mesh).
+    /// </summary>
+    public void LogPipelineDiagnosis()
+    {
+        EnsureSmplRoot();
+        EnsureBoneMapExcludingGarments();
+
+        Debug.Log("──────── [SmplGarmentManager] PIPELINE DIAGNOSIS ────────", this);
+
+        if (smplRoot == null)
+        {
+            Debug.LogError(
+                "[1/5] SMPL root: MISSING. Assign Smpl Root on bootstrap/manager or set smplRootName to the rig in Hierarchy.",
+                this);
+        }
+        else
+            Debug.Log($"[1/5] SMPL root: OK → '{smplRoot.name}'", this);
+
+        if (smplBonesByName == null || smplBonesByName.Count == 0)
+            Debug.LogError("[2/5] SMPL bone map: EMPTY. Check Smpl Armature Root Name / override.", this);
+        else
+            Debug.Log($"[2/5] SMPL bone map: OK ({smplBonesByName.Count} keys)", this);
+
+        var fk = FindSpheresToBonesFkInScene();
+        if (fk == null)
+        {
+            Debug.LogError(
+                "[3/5] SpheresToBones_FKDriver: NOT FOUND in scene. Without it, SMPL bones are not driven from spheres → no pose → garment follows nothing. Add/configure it on the SMPL rig (see README).",
+                this);
+        }
+        else
+        {
+            int validSeg = CountValidFkSegments(fk);
+            Debug.Log(
+                $"[3/5] SpheresToBones_FKDriver: OK on '{fk.gameObject.name}' | rootBone={(fk.rootBone != null ? fk.rootBone.name : "NULL")} | wiredSegments={validSeg}",
+                fk);
+            if (validSeg == 0)
+                Debug.LogError(
+                    "[3/5] FK segments not wired: assign bone/boneChild/sphere/sphereChild on each segment (or body stays in bind pose).",
+                    fk);
+        }
+
+        LogPlaybackOptionalDiagnosis();
+
+        if (ActiveGarmentInstance == null)
+        {
+            Debug.Log("[5/5] Garment: none spawned yet. Call TrySetActive or use catalog auto-select.", this);
+        }
+        else
+        {
+            var skinned = ActiveGarmentInstance.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            if (skinned == null || skinned.Length == 0)
+                Debug.LogError("[5/5] Garment: no SkinnedMeshRenderer — prefab must be a skinned mesh.", ActiveGarmentInstance);
+            else
+            {
+                foreach (var smr in skinned)
+                {
+                    if (!smr) continue;
+                    int infl = CountBonesInfluencingMesh(smr);
+                    Debug.Log($"[5/5] Garment SMR '{smr.name}': bones influencing mesh = {infl}", smr);
+                    if (infl <= 1)
+                        Debug.LogError(
+                            "[5/5] FIX MESH: weights use only one bone (often J00). Re-export from Blender with weights transferred from SMPL body — Tools/blender_golden_garment_from_fbx.py, then GarmentCatalog → prepared FBX.",
+                            smr);
+                }
+
+                if (fk != null && fk.rootBone != null)
+                {
+                    var smr0 = ActiveGarmentInstance.GetComponentInChildren<SkinnedMeshRenderer>(true);
+                    if (smr0 != null && smr0.bones != null)
+                    {
+                        foreach (var b in smr0.bones)
+                        {
+                            if (b == null) continue;
+                            if (!string.Equals(ResolveSmplKey(b.name), "J00", StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            if (b != fk.rootBone)
+                                Debug.LogError(
+                                    "[5/5] Shirt J00 after remap ≠ FK rootBone (wrong armature in bone map). Set Smpl Armature Root Override to the driven armature parent of J00.",
+                                    smr0);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Debug.Log(
+            "── Next: If [3] fails → fix SMPL/spheres first. If [3] OK but [5] infl≤1 → fix garment FBX weights. If [5] pelvis error → armature override. ──",
+            this);
+    }
+
+    static SpheresToBones_FKDriver FindSpheresToBonesFkInScene()
+    {
+        var all = UnityEngine.Object.FindObjectsOfType<SpheresToBones_FKDriver>(true);
+        return all != null && all.Length > 0 ? all[0] : null;
+    }
+
+    static int CountValidFkSegments(SpheresToBones_FKDriver fk)
+    {
+        if (fk?.segments == null) return 0;
+        int n = 0;
+        foreach (var s in fk.segments)
+        {
+            if (s == null) continue;
+            if (s.bone && s.boneChild && s.sphere && s.sphereChild) n++;
+        }
+
+        return n;
+    }
+
+    void LogPlaybackOptionalDiagnosis()
+    {
+        var jpv1 = UnityEngine.Object.FindObjectsOfType<JointPlaybackStream>(true);
+        var jpv2 = UnityEngine.Object.FindObjectsOfType<JointPlaybackStreamV2>(true);
+
+        if ((jpv1 == null || jpv1.Length == 0) && (jpv2 == null || jpv2.Length == 0))
+        {
+            Debug.Log(
+                "[4/5] Playback (JointPlaybackStream): none in scene — OK if another system moves JointSpheresRoot (e.g. websocket).",
+                this);
+            return;
+        }
+
+        if (jpv1 != null && jpv1.Length > 0)
+        {
+            var p = jpv1[0];
+            bool json = p.sequenceJson != null && !string.IsNullOrWhiteSpace(p.sequenceJson.text);
+            Debug.Log(
+                $"[4/5] JointPlaybackStream on '{p.gameObject.name}': sequenceJson={(json ? "OK" : "EMPTY — assign TextAsset or set playOnStart=false")}",
+                p);
+        }
+
+        if (jpv2 != null && jpv2.Length > 0)
+        {
+            var p = jpv2[0];
+            bool seq = p.mode == JointPlaybackStreamV2.Mode.SequencePlayback
+                && p.sequenceJson != null
+                && !string.IsNullOrWhiteSpace(p.sequenceJson.text);
+            Debug.Log($"[4/5] JointPlaybackStreamV2 on '{p.gameObject.name}': mode={p.mode} sequenceOk={seq}", p);
+        }
+    }
+
+    static int CountBonesInfluencingMesh(SkinnedMeshRenderer smr)
+    {
+        var mesh = smr.sharedMesh;
+        if (mesh == null) return 0;
+        var bws = mesh.boneWeights;
+        if (bws == null || bws.Length == 0) return 0;
+        var bones = smr.bones;
+        int n = bones != null ? bones.Length : 0;
+        if (n <= 0) return 0;
+        var totals = new float[n];
+        foreach (var bw in bws)
+        {
+            void Acc(int i, float w)
+            {
+                if (i < 0 || i >= n || w <= 1e-8f) return;
+                totals[i] += w;
+            }
+
+            Acc(bw.boneIndex0, bw.weight0);
+            Acc(bw.boneIndex1, bw.weight1);
+            Acc(bw.boneIndex2, bw.weight2);
+            Acc(bw.boneIndex3, bw.weight3);
+        }
+
+        int c = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (totals[i] > 1e-6f) c++;
+        }
+
+        return c;
     }
 
     public void ClearActive()
