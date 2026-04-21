@@ -374,7 +374,7 @@ In Blender, avoid relying on **IK/constraints** for the final bind — Unity use
 3. **Pose tracking, not cloth**: `SpheresToBones_FKDriver` drives each **segment’s parent bone** from sphere directions; wrists follow **only via the bone hierarchy** unless you add more segments for forearm→wrist in the scene. If the body does not raise arms fully, the shirt will not either — tune MediaPipe / sphere mapping first.
 4. Re-run the Blender export (`Tools/blender_golden_garment_from_fbx.py`) after changing the source shirt FBX; Data Transfer uses **POLYINTERP_VNORPROJ** when available for smoother sleeve weights.
 
-5. **Shirt frozen but looks fine:** The garment FBX brings a **second** armature with duplicate `J00`…`J23` names. The manager must build the SMPL bone map from the **real** armature only (`Smpl Armature Root Name` = `SMPL_Armature` on `SmplGarmentManager`). If that field does not match your scene rig, remap can keep pointing at the **duplicate** bones under `_Garments` → **no movement**.
+5. **Shirt frozen but looks fine:** Duplicate `J00`…`J23` names can come from the garment under `_Garments` **or** a second armature next to the live rig. The manager now prefers the subtree that `SpheresToBones_FKDriver` drives (via `rootBone`). If it still freezes, set **`Smpl Armature Root Override`** on `SmplGarmentManager` to the **driven** armature object (parent of pelvis/J00, **not** under `_Garments`). Check the Console for errors about pelvis ≠ FK `rootBone`.
 
 ---
 

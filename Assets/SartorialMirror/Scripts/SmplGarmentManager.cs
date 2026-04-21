@@ -83,6 +83,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
              "Bone lookups use ONLY this subtree so duplicate J-bones under _Garments never win (frozen shirt).")]
     public string smplArmatureRootName = "SMPL_Armature";
 
+    [Tooltip("Optional: drag the driven SMPL armature root (the parent of J00 under SMPL_neutral_rig_GOLDEN). " +
+             "When set, skips name search — use when multiple Armature/SMPL objects exist and the shirt stays frozen.")]
+    public Transform smplArmatureRootOverride;
+
     [Header("Alignment")]
     [Tooltip("If true, after spawning we snap the garment to the SMPL pelvis/hips to correct FBX root offsets.")]
     public bool snapGarmentToSmplPelvis = true;
@@ -297,7 +301,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     void EnsureBoneMapExcludingGarments()
     {
         EnsureGarmentsParent();
-        smplBonesByName = new Dictionary<string, Transform>(StringComparer.Ordinal);
+        smplBonesByName = new Dictionary<string, Transform>(StringComparer.OrdinalIgnoreCase);
         if (smplRoot == null) return;
 
         var armatureRoot = FindSmplDrivenArmatureRoot();
@@ -331,6 +335,59 @@ public sealed class SmplGarmentManager : MonoBehaviour
     {
         if (smplRoot == null) return null;
 
+        if (smplArmatureRootOverride != null)
+        {
+            if (IsTransformUnderGarments(smplArmatureRootOverride))
+            {
+                if (logSpawnFailures)
+                    Debug.LogWarning(
+                        "[SmplGarmentManager] smplArmatureRootOverride is under _Garments — ignoring (would freeze the shirt).",
+                        this);
+            }
+            else if (!smplArmatureRootOverride.IsChildOf(smplRoot) && smplArmatureRootOverride != smplRoot)
+            {
+                if (logSpawnFailures)
+                    Debug.LogWarning("[SmplGarmentManager] smplArmatureRootOverride is not under smplRoot — ignoring.", this);
+            }
+            else
+            {
+                if (logMissingBoneNames)
+                    Debug.Log($"[SmplGarmentManager] Using smplArmatureRootOverride '{smplArmatureRootOverride.name}'.", this);
+                return smplArmatureRootOverride;
+            }
+        }
+
+        // Prefer the subtree that SpheresToBones_FKDriver actually drives (avoids picking a duplicate static armature).
+        var fk = smplRoot.GetComponentInChildren<SpheresToBones_FKDriver>(true);
+        if (fk != null)
+        {
+            var anchor = fk.rootBone;
+            if (anchor == null && fk.segments != null)
+            {
+                foreach (var seg in fk.segments)
+                {
+                    if (seg != null && seg.bone != null)
+                    {
+                        anchor = seg.bone;
+                        break;
+                    }
+                }
+            }
+
+            if (anchor != null)
+            {
+                var resolved = FindDirectChildOfSmplRootOnPathToDescendant(smplRoot, anchor);
+                if (resolved != null && !IsTransformUnderGarments(resolved))
+                {
+                    if (logMissingBoneNames)
+                        Debug.Log(
+                            $"[SmplGarmentManager] Armature root from SpheresToBones_FKDriver (anchor '{anchor.name}'): '{resolved.name}'.",
+                            this);
+                    return resolved;
+                }
+            }
+        }
+
         // Try user name first, then common FBX import names (Unity may rename SMPL_Armature → Armature).
         var candidates = new List<string>(4);
         if (!string.IsNullOrEmpty(smplArmatureRootName))
@@ -359,6 +416,32 @@ public sealed class SmplGarmentManager : MonoBehaviour
         return null;
     }
 
+    /// <summary>Returns the transform that is a direct child of <paramref name="smplRoot"/> on the path to <paramref name="descendant"/>.</summary>
+    static Transform FindDirectChildOfSmplRootOnPathToDescendant(Transform smplRoot, Transform descendant)
+    {
+        if (smplRoot == null || descendant == null) return null;
+        if (descendant == smplRoot) return null;
+        if (!descendant.IsChildOf(smplRoot)) return null;
+        var t = descendant;
+        while (t.parent != null && t.parent != smplRoot)
+            t = t.parent;
+        return t;
+    }
+
+    static string TransformHierarchyPath(Transform t)
+    {
+        if (t == null) return "";
+        var parts = new List<string>(8);
+        while (t != null)
+        {
+            parts.Add(t.name);
+            t = t.parent;
+        }
+
+        parts.Reverse();
+        return string.Join("/", parts);
+    }
+
     bool IsTransformUnderGarments(Transform t)
     {
         if (t == null || garmentsParent == null) return false;
@@ -378,7 +461,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     void EnsureBoneMapInternal(bool excludeTransformsUnderGarmentsParent)
     {
-        smplBonesByName = new Dictionary<string, Transform>(StringComparer.Ordinal);
+        smplBonesByName = new Dictionary<string, Transform>(StringComparer.OrdinalIgnoreCase);
         if (smplRoot == null) return;
 
         foreach (var t in smplRoot.GetComponentsInChildren<Transform>(true))
@@ -874,6 +957,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         if (mappedCount > 0)
         {
             ValidateRemappedBonesAreSceneSmpl(smr);
+            ValidateRemappedPelvisMatchesFkDriver(smr);
             RefreshSkinnedRendererAfterBoneRemap(smr);
         }
     }
@@ -893,6 +977,36 @@ public sealed class SmplGarmentManager : MonoBehaviour
                     smr);
                 return;
             }
+        }
+    }
+
+    /// <summary>
+    /// If two armatures exist under smplRoot (not only under _Garments), remap can still bind to the wrong J00.
+    /// Compare shirt pelvis bone to <see cref="SpheresToBones_FKDriver.rootBone"/>.
+    /// </summary>
+    void ValidateRemappedPelvisMatchesFkDriver(SkinnedMeshRenderer smr)
+    {
+        if (smr == null || smr.bones == null || smplRoot == null) return;
+        var fk = smplRoot.GetComponentInChildren<SpheresToBones_FKDriver>(true);
+        if (fk == null || fk.rootBone == null) return;
+
+        foreach (var b in smr.bones)
+        {
+            if (b == null) continue;
+            if (!string.Equals(ResolveSmplKey(b.name), "J00", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (b != fk.rootBone)
+            {
+                Debug.LogError(
+                    "[SmplGarmentManager] Shirt pelvis bone after remap is NOT the same Transform as SpheresToBones_FKDriver.rootBone " +
+                    $"(shirt→'{TransformHierarchyPath(b)}', FK→'{TransformHierarchyPath(fk.rootBone)}'). " +
+                    "The bone map likely used a duplicate static armature — assign Smpl Armature Root Override to the driven armature root, " +
+                    "or fix hierarchy so only one SMPL skeleton exists under the rig root.",
+                    smr);
+            }
+
+            return;
         }
     }
 
