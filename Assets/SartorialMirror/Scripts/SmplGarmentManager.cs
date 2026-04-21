@@ -172,6 +172,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("After a garment spawns, log one structured checklist: SMPL, FK driver, playback, skin weights, pelvis match — and what to fix next.")]
     public bool logPipelineDiagnosis = true;
 
+    [Tooltip("If fewer bones than this have non-zero weight on the garment mesh, diagnosis reports FIX MESH (typical SMPL shirt uses many bones; 2 is almost always wrong).")]
+    [Range(2, 32)]
+    public int diagnosisMinHealthyInfluencingBones = 8;
+
     private Transform garmentsParent;
     private Dictionary<string, Transform> smplBonesByName;
     private Transform cachedSmplPelvis;
@@ -649,6 +653,11 @@ public sealed class SmplGarmentManager : MonoBehaviour
                         Debug.LogError(
                             "[5/5] FIX MESH: weights use only one bone (often J00). Re-export from Blender with weights transferred from SMPL body — Tools/blender_golden_garment_from_fbx.py, then GarmentCatalog → prepared FBX.",
                             smr);
+                    else if (infl < Mathf.Max(2, diagnosisMinHealthyInfluencingBones))
+                        Debug.LogError(
+                            $"[5/5] FIX MESH: only {infl} bones have weight — too few for a shirt (expect ~{diagnosisMinHealthyInfluencingBones}+ on a proper SMPL-skinned export). " +
+                            "This is the garment FBX, not spheres/remap. Re-bind / Data Transfer weights from SMPL body in Blender, re-export, update GarmentCatalog.",
+                            smr);
                 }
 
                 if (fk != null && fk.rootBone != null)
@@ -673,7 +682,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
 
         Debug.Log(
-            "── Next: If [3] fails → fix SMPL/spheres first. If [3] OK but [5] infl≤1 → fix garment FBX weights. If [5] pelvis error → armature override. ──",
+            $"── Next: If [3] fails → fix SMPL/spheres first. If [3] OK but [5] infl < {diagnosisMinHealthyInfluencingBones} → fix garment FBX weights in Blender. If [5] pelvis error → armature override. ──",
             this);
     }
 
