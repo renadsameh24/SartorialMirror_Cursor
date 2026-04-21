@@ -208,8 +208,14 @@ public sealed class SmplGarmentManager : MonoBehaviour
     void RemapSkinnedMeshToSmpl(SkinnedMeshRenderer smr)
     {
         // 1) Remap root bone if present
+        int mappedCount = 0;
+        int totalCount = 0;
+
         if (smr.rootBone != null && smplBonesByName.TryGetValue(smr.rootBone.name, out var smplRootBone))
+        {
             smr.rootBone = smplRootBone;
+            mappedCount++;
+        }
 
         // 2) Remap all bones by name
         var bones = smr.bones;
@@ -221,9 +227,13 @@ public sealed class SmplGarmentManager : MonoBehaviour
         {
             var b = bones[i];
             if (b == null) { anyMissing = true; continue; }
+            totalCount++;
 
             if (smplBonesByName.TryGetValue(b.name, out var smplBone))
+            {
                 bones[i] = smplBone;
+                mappedCount++;
+            }
             else
             {
                 anyMissing = true;
@@ -236,6 +246,15 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
 
         smr.bones = bones;
+
+        if (mappedCount == 0)
+        {
+            Debug.LogWarning(
+                $"Garment bone remap: {smr.name} mapped 0/{Mathf.Max(1, totalCount)} bones onto SMPL. " +
+                $"This usually means bone names don't match between the garment FBX and the Unity SMPL rig. " +
+                $"Example garment bone: {GetFirstNonNullName(smr.bones)}; example SMPL bone: {GetFirstKey(smplBonesByName)}.",
+                smr);
+        }
 
         // 3) If the garment isn't authored in SMPL space, you may still need a one-time local offset.
         // We intentionally don't apply offsets here to keep the pipeline deterministic.
@@ -254,6 +273,23 @@ public sealed class SmplGarmentManager : MonoBehaviour
     static string GetFirst(HashSet<string> set)
     {
         foreach (var s in set) return s;
+        return "";
+    }
+
+    static string GetFirstNonNullName(Transform[] bones)
+    {
+        if (bones == null) return "";
+        foreach (var b in bones)
+        {
+            if (b != null) return b.name;
+        }
+        return "";
+    }
+
+    static string GetFirstKey(Dictionary<string, Transform> dict)
+    {
+        if (dict == null) return "";
+        foreach (var kv in dict) return kv.Key;
         return "";
     }
 }
