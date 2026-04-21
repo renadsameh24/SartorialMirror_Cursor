@@ -130,6 +130,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private readonly Dictionary<Transform, Quaternion> bindRotLeftMul = new();
     private bool pendingBindPoseSample;
     private Coroutine garmentDriveEndOfFrameRoutine;
+    private readonly List<(Transform g, Transform s, int depth)> _driveBonesSorted = new(48);
 
     void Awake()
     {
@@ -503,11 +504,25 @@ public sealed class SmplGarmentManager : MonoBehaviour
             pendingBindPoseSample = false;
         }
 
+        // Apply parents before children. Random dictionary order can set shoulder/arm world rotation
+        // before spine/clavicle chain is updated → wrong FK and visibly "stretched" arms.
+        _driveBonesSorted.Clear();
+        Transform subtreeRoot = garmentArmatureRoot != null ? garmentArmatureRoot : ActiveGarmentInstance != null ? ActiveGarmentInstance.transform : null;
         foreach (var kv in garmentToSmplBoneMap)
         {
             var g = kv.Key;
             var s = kv.Value;
             if (g == null || s == null) continue;
+            int depth = BoneDepthFromSubtreeRoot(g, subtreeRoot);
+            _driveBonesSorted.Add((g, s, depth));
+        }
+
+        _driveBonesSorted.Sort(static (a, b) => a.depth.CompareTo(b.depth));
+
+        foreach (var item in _driveBonesSorted)
+        {
+            var g = item.g;
+            var s = item.s;
             if (drivePositions) g.position = s.position;
 
             if (driveWorldRotation)
@@ -530,6 +545,21 @@ public sealed class SmplGarmentManager : MonoBehaviour
                     g.position = s.position + offset * (maxD / len);
             }
         }
+    }
+
+    static int BoneDepthFromSubtreeRoot(Transform bone, Transform subtreeRoot)
+    {
+        if (bone == null) return 0;
+        int d = 0;
+        var t = bone;
+        while (t != null && t != subtreeRoot)
+        {
+            d++;
+            t = t.parent;
+            if (d > 128) break;
+        }
+
+        return d;
     }
 
     static bool IsHandOrWrist(string j)
