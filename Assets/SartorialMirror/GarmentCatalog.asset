@@ -13,7 +13,9 @@ MonoBehaviour:
   m_Name: GarmentCatalog
   m_EditorClassIdentifier: 
   garments:
-  - displayName: Flannel Shirt (Woman)
-    garmentPrefab: {fileID: 7400000, guid: 849a8534042224dc8b56d38e9cf85872, type: 3}
+  - displayName: Flannel Shirt (SMPL skinned)
+    garmentPrefab: {fileID: 919132149155446097, guid: 5943b0bdcfffb48b1b0e90d629c37278, type: 3}
     thumbnail: {fileID: 0}
-
+    colorVariants:
+    - {r: 1, g: 1, b: 1, a: 1}
+    defaultColorVariantIndex: 0
