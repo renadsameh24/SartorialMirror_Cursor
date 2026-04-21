@@ -97,9 +97,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
              "If ON: duplicate garment armature + copy transforms each frame — OK for tuning, but turn OFF if you still see stretch after fixes.")]
     public bool driveGarmentArmatureFromSmpl = false;
 
-    [Tooltip("After remap, rebuild Mesh.bindposes from the SMPL bones at spawn time so sleeve/arm length matches the scene rig. " +
-             "If OFF, Unity keeps the FBX bind poses (often wrong bone lengths → stretched / very long arms).")]
-    public bool recalculateBindPosesAfterRemap = true;
+    [Tooltip("After remap, rebuild Mesh.bindposes from SMPL bones at spawn. " +
+             "OFF by default: remap-only usually follows pose (Blender export uses the same SMPL rig). " +
+             "Turn ON only if you see stretched sleeves / wrong arm length; requires readable mesh import for best results.")]
+    public bool recalculateBindPosesAfterRemap = false;
 
     [Tooltip("Bind-pose math: use SkinnedMeshRenderer local space (default), or SMPL rootBone world matrix if stretch persists.")]
     public GarmentBindPoseReference bindPoseReference = GarmentBindPoseReference.SkinnedMeshRendererLocal;
@@ -789,6 +790,20 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 $"Garment bone remap: {smr.name} is missing {missingNames.Count} SMPL bone(s). Example: {GetFirst(missingNames)}.",
                 smr);
         }
+
+        if (mappedCount > 0)
+            RefreshSkinnedRendererAfterBoneRemap(smr);
+    }
+
+    /// <summary>
+    /// Some Unity versions / platforms delay picking up new bone references until the renderer is toggled.
+    /// </summary>
+    static void RefreshSkinnedRendererAfterBoneRemap(SkinnedMeshRenderer smr)
+    {
+        if (smr == null) return;
+        bool e = smr.enabled;
+        smr.enabled = false;
+        smr.enabled = e;
     }
 
     /// <summary>
