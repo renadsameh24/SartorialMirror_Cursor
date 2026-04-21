@@ -94,8 +94,12 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("Extra slack allowed beyond the initial bone offset (meters).")]
     public float clampSlackMeters = 0.02f;
 
-    [Tooltip("If true, drive garment bones using world rotation (more stable than localRotation when bind poses differ).")]
+    [Tooltip("Used when Match Driven Bones To SMPL World is off. If true, copy world rotation; if false, copy localRotation (parent chain must be sane).")]
     public bool driveWorldRotation = true;
+
+    [Tooltip("If true (recommended for stretched arms), each mapped bone uses SetPositionAndRotation(s.position, rot) so pivots match scene SMPL. " +
+             "Fixes sleeve stretch when the garment FBX armature has different bone lengths than the scene rig. Off = rotation-only like before.")]
+    public bool matchDrivenBonesToSmplWorld = true;
 
     [Tooltip("If true, each frame uses a pre-sampled quaternion offset between garment and SMPL bone (see RecordBindPoseRotationOffsets). " +
              "If arms still look wrong, leave this off and use simple world copy + end-of-frame drive.")]
@@ -523,18 +527,25 @@ public sealed class SmplGarmentManager : MonoBehaviour
         {
             var g = item.g;
             var s = item.s;
-            if (drivePositions) g.position = s.position;
 
-            if (driveWorldRotation)
+            Quaternion rot;
+            if (useBindPoseRotationOffset && bindRotLeftMul.TryGetValue(g, out var k))
+                rot = k * s.rotation;
+            else
+                rot = s.rotation;
+
+            if (matchDrivenBonesToSmplWorld)
             {
-                if (useBindPoseRotationOffset && bindRotLeftMul.TryGetValue(g, out var k))
-                    g.rotation = k * s.rotation;
-                else
-                    g.rotation = s.rotation;
+                g.SetPositionAndRotation(s.position, rot);
             }
             else
             {
-                g.localRotation = s.localRotation;
+                if (drivePositions) g.position = s.position;
+
+                if (driveWorldRotation)
+                    g.rotation = rot;
+                else
+                    g.localRotation = s.localRotation;
             }
 
             if (clampBoneStretch && garmentBoneMaxDistance.TryGetValue(g, out var maxD))
