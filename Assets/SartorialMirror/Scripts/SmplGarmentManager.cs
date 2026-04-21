@@ -73,8 +73,11 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("Recommended. Keep garment skinned to its own armature and drive that armature from the scene SMPL bones each frame. Avoids bindpose mismatches that can cause 'exploding' sleeves.")]
     public bool driveGarmentArmatureFromSmpl = true;
 
-    [Tooltip("If true, also copy bone positions (not just rotations). Usually safe for this pose-driven setup.")]
-    public bool drivePositions = true;
+    [Tooltip("If true, also copy bone positions (not just rotations). Usually NOT recommended; can stretch chains if bind poses differ.")]
+    public bool drivePositions = false;
+
+    [Tooltip("Skip driving wrist/hand bones (recommended for shirts to avoid sleeve explosions).")]
+    public bool skipHandsAndWrists = true;
 
     [Header("Catalog")]
     public GarmentCatalog catalog;
@@ -314,6 +317,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
             if (gt == null) continue;
             var key = ResolveSmplKey(gt.name);
             if (string.IsNullOrEmpty(key)) continue;
+            if (skipHandsAndWrists && IsHandOrWrist(key)) continue;
             if (smplBonesByName.TryGetValue(key, out var smplT) && smplT != null)
                 map[gt] = smplT;
         }
@@ -348,9 +352,19 @@ public sealed class SmplGarmentManager : MonoBehaviour
             var g = kv.Key;
             var s = kv.Value;
             if (g == null || s == null) continue;
-            if (drivePositions) g.position = s.position;
-            g.rotation = s.rotation;
+            // Prefer local space (less likely to stretch if hierarchies differ).
+            if (drivePositions) g.localPosition = s.localPosition;
+            g.localRotation = s.localRotation;
         }
+    }
+
+    static bool IsHandOrWrist(string j)
+    {
+        // J20/J21 wrists, J22/J23 hands in this rig family.
+        return string.Equals(j, "J20", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(j, "J21", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(j, "J22", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(j, "J23", StringComparison.OrdinalIgnoreCase);
     }
 
     void SnapGarmentRootToSmplPelvis(GameObject garmentRoot)
