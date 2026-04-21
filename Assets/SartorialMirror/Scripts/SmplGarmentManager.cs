@@ -60,8 +60,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("If true, after spawning we snap the garment to the SMPL pelvis/hips to correct FBX root offsets.")]
     public bool snapGarmentToSmplPelvis = true;
 
-    [Tooltip("If true, keep snapping every frame (recommended for live-tracked rigs that move).")]
-    public bool continuousPelvisSnap = true;
+    [Tooltip("If true, keep snapping every frame. Can fight armature driving if alignment is already correct; try off first.")]
+    public bool continuousPelvisSnap = false;
 
     [Tooltip("Candidate bone names for pelvis/hips on the SMPL rig.")]
     public string[] smplPelvisBoneNames = { "J00", "pelvis", "Hips", "hips", "Pelvis" };
@@ -76,8 +76,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("If true, also copy bone positions (not just rotations). Usually NOT recommended; can stretch chains if bind poses differ.")]
     public bool drivePositions = false;
 
-    [Tooltip("Skip driving wrist/hand bones (recommended for shirts to avoid sleeve explosions).")]
-    public bool skipHandsAndWrists = true;
+    [Tooltip("If true, wrist/hand bones keep spawn pose. If the mesh has weights on those bones, leaving them undriven can distort; disable for stable full-body drive.")]
+    public bool skipHandsAndWrists = false;
 
     [Header("Stretch Guard")]
     [Tooltip("If true, clamp each driven garment bone so it cannot move farther from its SMPL bone than at spawn time.")]
@@ -224,6 +224,11 @@ public sealed class SmplGarmentManager : MonoBehaviour
         ActiveGarmentInstance.transform.localRotation = Quaternion.identity;
         ActiveGarmentInstance.transform.localScale = Vector3.one;
 
+        // Align to SMPL *before* building drive maps / stretch limits. Doing snap after the map
+        // used wrong world-space bone pairs and made clamp distances invalid (classic "exploding" mesh).
+        if (snapGarmentToSmplPelvis)
+            SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
+
         if (driveGarmentArmatureFromSmpl)
         {
             BuildGarmentArmatureDriveMap(ActiveGarmentInstance);
@@ -232,9 +237,6 @@ public sealed class SmplGarmentManager : MonoBehaviour
         {
             RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
         }
-
-        if (snapGarmentToSmplPelvis)
-            SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
 
         // Set active index before applying variants (ApplyActiveColorVariant reads activeIndex).
         activeIndex = index;
@@ -335,6 +337,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 map[gt] = smplT;
         }
 
+        AugmentGarmentDriveMapWithSkinWeights(smr, map);
+
         garmentToSmplBoneMap = map.Count > 0 ? map : null;
         if (garmentToSmplBoneMap == null)
             Debug.LogWarning("Garment armature drive: no matching bones found between garment armature and SMPL rig.", garmentRoot);
@@ -349,6 +353,41 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 float d = Vector3.Distance(g.position, s.position) + Mathf.Max(0f, clampSlackMeters);
                 garmentBoneMaxDistance[g] = d;
             }
+        }
+    }
+
+    void AugmentGarmentDriveMapWithSkinWeights(SkinnedMeshRenderer smr, Dictionary<Transform, Transform> map)
+    {
+        var mesh = smr.sharedMesh;
+        var bones = smr.bones;
+        if (mesh == null || bones == null || bones.Length == 0) return;
+        var bws = mesh.boneWeights;
+        if (bws == null || bws.Length == 0) return;
+
+        var weightedBones = new HashSet<Transform>();
+        foreach (var bw in bws)
+        {
+            void consider(int idx, float w)
+            {
+                if (w <= 1e-4f || idx < 0 || idx >= bones.Length) return;
+                var t = bones[idx];
+                if (t != null) weightedBones.Add(t);
+            }
+
+            consider(bw.boneIndex0, bw.weight0);
+            consider(bw.boneIndex1, bw.weight1);
+            consider(bw.boneIndex2, bw.weight2);
+            consider(bw.boneIndex3, bw.weight3);
+        }
+
+        foreach (var gBone in weightedBones)
+        {
+            if (map.ContainsKey(gBone)) continue;
+            var key = ResolveSmplKey(gBone.name);
+            if (string.IsNullOrEmpty(key)) continue;
+            if (skipHandsAndWrists && IsHandOrWrist(key)) continue;
+            if (smplBonesByName.TryGetValue(key, out var smplT) && smplT != null)
+                map[gBone] = smplT;
         }
     }
 
