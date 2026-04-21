@@ -78,8 +78,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
     public string[] garmentPelvisBoneNames = { "J00", "pelvis", "Hips", "hips", "Pelvis" };
 
     [Header("Deformation Strategy")]
-    [Tooltip("If OFF (default): point each SkinnedMeshRenderer bone at the scene SMPL bones by name — same skeleton MediaPipe/FK already drives (recommended). " +
-             "If ON: keep a duplicate garment armature and copy transforms each frame (older path; easier bind issues / stretch).")]
+    [Tooltip("If OFF (default): point each SkinnedMeshRenderer bone at the scene SMPL bones by name — same skeleton MediaPipe/FK already drives (recommended; works with Recalculate Bind Poses). " +
+             "If ON: duplicate garment armature + copy transforms each frame — OK for tuning, but turn OFF if you still see stretch after fixes.")]
     public bool driveGarmentArmatureFromSmpl = false;
 
     [Tooltip("After remap, rebuild Mesh.bindposes from the SMPL bones at spawn time so sleeve/arm length matches the scene rig. " +
@@ -89,7 +89,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("If true, also copy bone positions (not just rotations). Usually NOT recommended; can stretch chains if bind poses differ.")]
     public bool drivePositions = false;
 
-    [Tooltip("If true, wrist/hand bones keep spawn pose. If the mesh has weights on those bones, leaving them undriven can distort; disable for stable full-body drive.")]
+    [Tooltip("If true, skip wrist/hand in the initial bone sweep only. Any bone with skin weights is still driven from SMPL (required or verts stretch). " +
+             "Leave false to drive the full chain including hands.")]
     public bool skipHandsAndWrists = false;
 
     [Header("Stretch Guard")]
@@ -431,7 +432,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 map[gt] = smplT;
         }
 
-        AugmentGarmentDriveMapWithSkinWeights(smr, map);
+        var skinned = garmentRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        foreach (var sm in skinned)
+            AugmentGarmentDriveMapWithSkinWeights(sm, map);
 
         garmentToSmplBoneMap = map.Count > 0 ? map : null;
         if (garmentToSmplBoneMap == null)
@@ -492,7 +495,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
             if (map.ContainsKey(gBone)) continue;
             var key = ResolveSmplKey(gBone.name);
             if (string.IsNullOrEmpty(key)) continue;
-            if (skipHandsAndWrists && IsHandOrWrist(key)) continue;
+            // Never skip weighted wrist/hand: undriven bones + non-zero weights = huge stretch / "long tube" artifacts.
             if (smplBonesByName.TryGetValue(key, out var smplT) && smplT != null)
                 map[gBone] = smplT;
         }
