@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -96,9 +97,13 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("If true, drive garment bones using world rotation (more stable than localRotation when bind poses differ).")]
     public bool driveWorldRotation = true;
 
-    [Tooltip("If true (recommended), each frame applies g.rotation = (g_bind * Inv(s_bind)) * s_live so garment bind pose vs SMPL bind is preserved while tracking. " +
-             "Offset is sampled on the first LateUpdate after spawn so SMPL arm drivers have already run this frame.")]
-    public bool useBindPoseRotationOffset = true;
+    [Tooltip("If true, each frame uses a pre-sampled quaternion offset between garment and SMPL bone (see RecordBindPoseRotationOffsets). " +
+             "If arms still look wrong, leave this off and use simple world copy + end-of-frame drive.")]
+    public bool useBindPoseRotationOffset = false;
+
+    [Tooltip("If true, copy bone rotations in a WaitForEndOfFrame coroutine so SpheresToBones_FKDriver + Animator finish first. " +
+             "Try this when arms/sleeves explode: LateUpdate can run before the rig’s final pose for this frame.")]
+    public bool applyGarmentDriveAtEndOfFrame = true;
 
     [Header("Catalog")]
     public GarmentCatalog catalog;
@@ -124,6 +129,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     /// <summary>Per bone: k = g.rotation * Inv(s.rotation) at bind sample, then g = k * s each frame.</summary>
     private readonly Dictionary<Transform, Quaternion> bindRotLeftMul = new();
     private bool pendingBindPoseSample;
+    private Coroutine garmentDriveEndOfFrameRoutine;
 
     void Awake()
     {
@@ -131,6 +137,32 @@ public sealed class SmplGarmentManager : MonoBehaviour
         EnsureBoneMap();
         EnsureGarmentsParent();
         cachedSmplPelvis = FindFirstByNames(smplRoot, smplPelvisBoneNames);
+    }
+
+    void OnEnable()
+    {
+        if (applyGarmentDriveAtEndOfFrame && garmentDriveEndOfFrameRoutine == null)
+            garmentDriveEndOfFrameRoutine = StartCoroutine(CoApplyGarmentDriveEndOfFrame());
+    }
+
+    void OnDisable()
+    {
+        if (garmentDriveEndOfFrameRoutine != null)
+        {
+            StopCoroutine(garmentDriveEndOfFrameRoutine);
+            garmentDriveEndOfFrameRoutine = null;
+        }
+    }
+
+    IEnumerator CoApplyGarmentDriveEndOfFrame()
+    {
+        var wait = new WaitForEndOfFrame();
+        while (enabled)
+        {
+            yield return wait;
+            if (applyGarmentDriveAtEndOfFrame && driveGarmentArmatureFromSmpl && ActiveGarmentInstance != null)
+                ApplyGarmentArmatureDrive();
+        }
     }
 
     // NOTE: LateUpdate is implemented at bottom of file (armature drive + pelvis snap).
@@ -437,7 +469,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         return t;
     }
 
-    void LateUpdateGarmentArmatureDrive()
+    void ApplyGarmentArmatureDrive()
     {
         if (!driveGarmentArmatureFromSmpl) return;
         if (garmentToSmplBoneMap == null || garmentToSmplBoneMap.Count == 0) return;
@@ -731,8 +763,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     void LateUpdate()
     {
-        // Keep garment armature in sync with the driven SMPL rig.
-        LateUpdateGarmentArmatureDrive();
+        if (!applyGarmentDriveAtEndOfFrame)
+            ApplyGarmentArmatureDrive();
 
         if (!continuousPelvisSnap) return;
         if (!snapGarmentToSmplPelvis) return;

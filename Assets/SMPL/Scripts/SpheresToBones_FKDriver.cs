@@ -52,6 +52,8 @@ public class SpheresToBones_FKDriver : MonoBehaviour
             if (boneDir.sqrMagnitude < 1e-10f || sphereDir.sqrMagnitude < 1e-10f) continue;
 
             // rotation that turns current bone direction into desired sphere direction
+            // Note: only s.bone is written; boneChild follows by hierarchy. Wrists may stay near bind
+            // unless you add a segment whose .bone is that joint.
             Quaternion delta = Quaternion.FromToRotation(boneDir.normalized, sphereDir.normalized);
             Quaternion targetRot = delta * s.bone.rotation;
 
