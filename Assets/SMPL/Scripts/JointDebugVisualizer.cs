@@ -125,16 +125,16 @@ public class JointPlaybackStream : MonoBehaviour
     {
         _sphereByJoint.Clear();
 
-        if (jointDebugRoot == null)
-        {
-            Debug.LogWarning("[Playback] jointDebugRoot is NULL. Drag the JointDebug object into this field.");
-            return;
-        }
+        // Default: this component usually lives on the JointDebug GameObject; spheres are a child.
+        Transform root = jointDebugRoot != null ? jointDebugRoot : transform;
 
-        var spheresRoot = jointDebugRoot.Find(jointSpheresRootName);
+        var spheresRoot = root.Find(jointSpheresRootName);
         if (spheresRoot == null)
         {
-            Debug.LogWarning("[Playback] Could not find JointSpheresRoot under JointDebug. Make sure JointDebugVisualizer is enabled.");
+            Debug.LogWarning(
+                $"[Playback] Could not find '{jointSpheresRootName}' under '{root.name}'. " +
+                "Assign Joint Debug Root to the JointDebug object (or place this script on JointDebug).",
+                this);
             return;
         }
 

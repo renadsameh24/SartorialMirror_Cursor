@@ -255,16 +255,15 @@ public class JointPlaybackStreamV2 : MonoBehaviour
     {
         _sphereByJoint.Clear();
 
-        if (jointDebugRoot == null)
-        {
-            Debug.LogWarning("[PlaybackV2] jointDebugRoot is NULL. Drag JointDebug into this field.");
-            return;
-        }
+        Transform root = jointDebugRoot != null ? jointDebugRoot : transform;
 
-        var spheresRoot = jointDebugRoot.Find(jointSpheresRootName);
+        var spheresRoot = root.Find(jointSpheresRootName);
         if (spheresRoot == null)
         {
-            Debug.LogWarning("[PlaybackV2] Could not find JointSpheresRoot under JointDebug.");
+            Debug.LogWarning(
+                $"[PlaybackV2] Could not find '{jointSpheresRootName}' under '{root.name}'. " +
+                "Assign Joint Debug Root to the JointDebug object (or place this script on JointDebug).",
+                this);
             return;
         }
 

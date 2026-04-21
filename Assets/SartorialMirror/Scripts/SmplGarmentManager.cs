@@ -1324,13 +1324,29 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
             // Find top 5 influences.
             var top = new List<(int idx, float w)>(8);
+            int bonesWithWeight = 0;
             for (int i = 0; i < totals.Length; i++)
             {
                 float w = totals[i];
                 if (w <= 0f) continue;
+                bonesWithWeight++;
                 top.Add((i, w));
             }
             top.Sort((a, b) => b.w.CompareTo(a.w));
+
+            if (bonesWithWeight <= 1)
+            {
+                string bn = top.Count > 0 && bones != null && top[0].idx < bones.Length && bones[top[0].idx] != null
+                    ? bones[top[0].idx].name
+                    : "?";
+                Debug.LogError(
+                    $"[SmplGarmentManager] Garment mesh '{smr.name}' has skin weights on only ONE bone ({bn}). " +
+                    "The shirt cannot follow arms/torso — it is rigidly glued to that bone. " +
+                    "Re-bind / transfer weights from the SMPL body in Blender (see README: Tools/blender_golden_garment_from_fbx.py), " +
+                    "then re-export the FBX with full J00–J23 influence.",
+                    smr);
+            }
+
             int n = Mathf.Min(5, top.Count);
 
             string msg = $"Garment weights (top {n}) for '{smr.name}': ";
