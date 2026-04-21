@@ -105,22 +105,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         cachedSmplPelvis = FindFirstByNames(smplRoot, smplPelvisBoneNames);
     }
 
-    void LateUpdate()
-    {
-        if (!continuousPelvisSnap) return;
-        if (!snapGarmentToSmplPelvis) return;
-        if (ActiveGarmentInstance == null) return;
-        if (smplRoot == null) return;
-
-        // Re-find pelvis if scene reload / hierarchy changes.
-        if (cachedSmplPelvis == null)
-            cachedSmplPelvis = FindFirstByNames(smplRoot, smplPelvisBoneNames);
-
-        if (cachedSmplPelvis == null) return;
-
-        // Keep the garment aligned even if the tracked rig root moves each frame.
-        SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
-    }
+    // NOTE: LateUpdate is implemented at bottom of file (armature drive + pelvis snap).
 
     public bool EnsureSmplRoot()
     {
