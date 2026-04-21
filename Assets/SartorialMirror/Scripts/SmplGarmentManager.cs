@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Drives garment bones from scene SMPL. Runs late in the frame so arm/torso bones updated by
-/// SmplFullBodyBoneDriverV4 / FK drivers (default order 0–900) are final before we copy them.
+/// Drives garment bones from scene SMPL. Runs late in the frame so SMPL bones are final before we copy them.
+/// This project’s working body setup uses only <see cref="SpheresToBones_FKDriver"/> on SMPL (see README);
+/// other IK / alternate drivers in the repo are unused experiments—execution order here is still “after default”
+/// so we follow whatever last wrote the rig (Animator + FK spheres pipeline).
 /// </summary>
 [DefaultExecutionOrder(1200)]
 public sealed class SmplGarmentManager : MonoBehaviour
