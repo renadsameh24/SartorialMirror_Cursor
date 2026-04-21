@@ -78,8 +78,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
     public string[] garmentPelvisBoneNames = { "J00", "pelvis", "Hips", "hips", "Pelvis" };
 
     [Header("Deformation Strategy")]
-    [Tooltip("Recommended. Keep garment skinned to its own armature and drive that armature from the scene SMPL bones each frame. Avoids bindpose mismatches that can cause 'exploding' sleeves.")]
-    public bool driveGarmentArmatureFromSmpl = true;
+    [Tooltip("If OFF (default): point each SkinnedMeshRenderer bone at the scene SMPL bones by name — same skeleton MediaPipe/FK already drives (recommended). " +
+             "If ON: keep a duplicate garment armature and copy transforms each frame (older path; easier bind issues / stretch).")]
+    public bool driveGarmentArmatureFromSmpl = false;
 
     [Tooltip("If true, also copy bone positions (not just rotations). Usually NOT recommended; can stretch chains if bind poses differ.")]
     public bool drivePositions = false;
@@ -97,8 +98,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("Used when Match Driven Bones To SMPL World is off. If true, copy world rotation; if false, copy localRotation (parent chain must be sane).")]
     public bool driveWorldRotation = true;
 
-    [Tooltip("If true (recommended for stretched arms), each mapped bone uses SetPositionAndRotation(s.position, rot) so pivots match scene SMPL. " +
-             "Fixes sleeve stretch when the garment FBX armature has different bone lengths than the scene rig. Off = rotation-only like before.")]
+    [Tooltip("Only when Drive Garment Armature From SMPL is ON. Matches world position+rotation per bone. Ignored in remap mode.")]
     public bool matchDrivenBonesToSmplWorld = true;
 
     [Tooltip("If true, each frame uses a pre-sampled quaternion offset between garment and SMPL bone (see RecordBindPoseRotationOffsets). " +
@@ -387,6 +387,11 @@ public sealed class SmplGarmentManager : MonoBehaviour
             RemapSkinnedMeshToSmpl(smr);
             LogTopWeightInfluences(smr);
         }
+
+        foreach (var anim in garmentRoot.GetComponentsInChildren<Animator>(true))
+        {
+            if (anim) anim.enabled = false;
+        }
     }
 
     void BuildGarmentArmatureDriveMap(GameObject garmentRoot)
@@ -604,28 +609,42 @@ public sealed class SmplGarmentManager : MonoBehaviour
         garmentRoot.transform.position += delta;
     }
 
+    bool TryGetSmplBoneTransform(string rawBoneName, out Transform smplBone)
+    {
+        smplBone = null;
+        if (smplBonesByName == null || string.IsNullOrEmpty(rawBoneName)) return false;
+
+        if (smplBonesByName.TryGetValue(rawBoneName, out smplBone) && smplBone != null)
+            return true;
+
+        var stripped = NormalizeBoneName(rawBoneName);
+        if (!string.IsNullOrEmpty(stripped) && smplBonesByName.TryGetValue(stripped, out smplBone) && smplBone != null)
+            return true;
+
+        var key = ResolveSmplKey(rawBoneName);
+        if (!string.IsNullOrEmpty(key) && smplBonesByName.TryGetValue(key, out smplBone) && smplBone != null)
+            return true;
+
+        if (!string.IsNullOrEmpty(stripped))
+        {
+            key = ResolveSmplKey(stripped);
+            if (!string.IsNullOrEmpty(key) && smplBonesByName.TryGetValue(key, out smplBone) && smplBone != null)
+                return true;
+        }
+
+        return false;
+    }
+
     void RemapSkinnedMeshToSmpl(SkinnedMeshRenderer smr)
     {
-        // 1) Remap root bone if present
+        if (smr == null || smplBonesByName == null) return;
+
         int mappedCount = 0;
         int totalCount = 0;
 
-        if (smr.rootBone != null && smplBonesByName.TryGetValue(smr.rootBone.name, out var smplRootBone))
-        {
+        if (smr.rootBone != null && TryGetSmplBoneTransform(smr.rootBone.name, out var smplRootBone))
             smr.rootBone = smplRootBone;
-            mappedCount++;
-        }
-        else if (smr.rootBone != null)
-        {
-            var key = ResolveSmplKey(smr.rootBone.name);
-            if (!string.IsNullOrEmpty(key) && smplBonesByName.TryGetValue(key, out smplRootBone))
-            {
-                smr.rootBone = smplRootBone;
-                mappedCount++;
-            }
-        }
 
-        // 2) Remap all bones by name
         var bones = smr.bones;
         if (bones == null || bones.Length == 0) return;
 
@@ -634,23 +653,20 @@ public sealed class SmplGarmentManager : MonoBehaviour
         for (int i = 0; i < bones.Length; i++)
         {
             var b = bones[i];
-            if (b == null) { anyMissing = true; continue; }
-            totalCount++;
+            if (b == null)
+            {
+                anyMissing = true;
+                continue;
+            }
 
-            if (smplBonesByName.TryGetValue(b.name, out var smplBone))
+            totalCount++;
+            if (TryGetSmplBoneTransform(b.name, out var smplBone))
             {
                 bones[i] = smplBone;
                 mappedCount++;
             }
             else
             {
-                var key = ResolveSmplKey(b.name);
-                if (!string.IsNullOrEmpty(key) && smplBonesByName.TryGetValue(key, out smplBone))
-                {
-                    bones[i] = smplBone;
-                    mappedCount++;
-                    continue;
-                }
                 anyMissing = true;
                 if (logMissingBoneNames)
                 {
@@ -666,22 +682,16 @@ public sealed class SmplGarmentManager : MonoBehaviour
         {
             Debug.LogWarning(
                 $"Garment bone remap: {smr.name} mapped 0/{Mathf.Max(1, totalCount)} bones onto SMPL. " +
-                $"This usually means bone names don't match between the garment FBX and the Unity SMPL rig. " +
-                $"Example garment bone: {GetFirstNonNullName(smr.bones)}; example SMPL bone: {GetFirstKey(smplBonesByName)}.",
+                $"Bone names must match the scene rig (J00… or prefixed). " +
+                $"Example garment bone: {GetFirstNonNullName(smr.bones)}.",
                 smr);
         }
 
-        // 3) If the garment isn't authored in SMPL space, you may still need a one-time local offset.
-        // We intentionally don't apply offsets here to keep the pipeline deterministic.
-        if (anyMissing)
+        if (anyMissing && logMissingBoneNames && missingNames != null && missingNames.Count > 0)
         {
-            if (logMissingBoneNames && missingNames != null && missingNames.Count > 0)
-            {
-                Debug.LogWarning(
-                    $"Garment bone remap: {smr.name} is missing {missingNames.Count} SMPL bone(s). " +
-                    $"Example: {GetFirst(missingNames)}. (Garment must be skinned to SMPL bone names for best results.)",
-                    smr);
-            }
+            Debug.LogWarning(
+                $"Garment bone remap: {smr.name} is missing {missingNames.Count} SMPL bone(s). Example: {GetFirst(missingNames)}.",
+                smr);
         }
     }
 
