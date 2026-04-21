@@ -60,6 +60,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("If true, after spawning we snap the garment to the SMPL pelvis/hips to correct FBX root offsets.")]
     public bool snapGarmentToSmplPelvis = true;
 
+    [Tooltip("If true, keep snapping every frame (recommended for live-tracked rigs that move).")]
+    public bool continuousPelvisSnap = true;
+
     [Tooltip("Candidate bone names for pelvis/hips on the SMPL rig.")]
     public string[] smplPelvisBoneNames = { "J00", "pelvis", "Hips", "hips", "Pelvis" };
 
@@ -83,12 +86,31 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     private Transform garmentsParent;
     private Dictionary<string, Transform> smplBonesByName;
+    private Transform cachedSmplPelvis;
 
     void Awake()
     {
         EnsureSmplRoot();
         EnsureBoneMap();
         EnsureGarmentsParent();
+        cachedSmplPelvis = FindFirstByNames(smplRoot, smplPelvisBoneNames);
+    }
+
+    void LateUpdate()
+    {
+        if (!continuousPelvisSnap) return;
+        if (!snapGarmentToSmplPelvis) return;
+        if (ActiveGarmentInstance == null) return;
+        if (smplRoot == null) return;
+
+        // Re-find pelvis if scene reload / hierarchy changes.
+        if (cachedSmplPelvis == null)
+            cachedSmplPelvis = FindFirstByNames(smplRoot, smplPelvisBoneNames);
+
+        if (cachedSmplPelvis == null) return;
+
+        // Keep the garment aligned even if the tracked rig root moves each frame.
+        SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
     }
 
     public bool EnsureSmplRoot()
@@ -272,7 +294,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     {
         if (garmentRoot == null || smplRoot == null) return;
 
-        var smplPelvis = FindFirstByNames(smplRoot, smplPelvisBoneNames);
+        var smplPelvis = cachedSmplPelvis != null ? cachedSmplPelvis : FindFirstByNames(smplRoot, smplPelvisBoneNames);
         var garmentPelvis = FindFirstByNames(garmentRoot.transform, garmentPelvisBoneNames);
 
         // If garment doesn't expose pelvis/hips as a Transform, try the rootBone of any SkinnedMeshRenderer.
