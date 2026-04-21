@@ -67,7 +67,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     public string[] smplPelvisBoneNames = { "J00", "pelvis", "Hips", "hips", "Pelvis" };
 
     [Tooltip("Candidate bone names for pelvis/hips on the garment rig.")]
-    public string[] garmentPelvisBoneNames = { "pelvis", "Hips", "hips", "Pelvis" };
+    public string[] garmentPelvisBoneNames = { "J00", "pelvis", "Hips", "hips", "Pelvis" };
 
     [Header("Deformation Strategy")]
     [Tooltip("Recommended. Keep garment skinned to its own armature and drive that armature from the scene SMPL bones each frame. Avoids bindpose mismatches that can cause 'exploding' sleeves.")]
