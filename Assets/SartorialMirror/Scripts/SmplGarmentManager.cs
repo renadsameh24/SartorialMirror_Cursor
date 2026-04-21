@@ -79,6 +79,16 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("Skip driving wrist/hand bones (recommended for shirts to avoid sleeve explosions).")]
     public bool skipHandsAndWrists = true;
 
+    [Header("Stretch Guard")]
+    [Tooltip("If true, clamp each driven garment bone so it cannot move farther from its SMPL bone than at spawn time.")]
+    public bool clampBoneStretch = true;
+
+    [Tooltip("Extra slack allowed beyond the initial bone offset (meters).")]
+    public float clampSlackMeters = 0.02f;
+
+    [Tooltip("If true, drive garment bones using world rotation (more stable than localRotation when bind poses differ).")]
+    public bool driveWorldRotation = true;
+
     [Header("Catalog")]
     public GarmentCatalog catalog;
 
@@ -99,6 +109,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private Transform cachedSmplPelvis;
     private Dictionary<Transform, Transform> garmentToSmplBoneMap;
     private Transform garmentArmatureRoot;
+    private readonly Dictionary<Transform, float> garmentBoneMaxDistance = new();
 
     void Awake()
     {
@@ -239,6 +250,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         activeColorVariantIndex = 0;
         garmentToSmplBoneMap = null;
         garmentArmatureRoot = null;
+        garmentBoneMaxDistance.Clear();
         if (ActiveGarmentInstance != null)
         {
             Destroy(ActiveGarmentInstance);
@@ -301,6 +313,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     {
         garmentToSmplBoneMap = null;
         garmentArmatureRoot = null;
+        garmentBoneMaxDistance.Clear();
         if (garmentRoot == null || smplRoot == null) return;
         if (smplBonesByName == null || smplBonesByName.Count == 0) EnsureBoneMap();
 
@@ -325,6 +338,18 @@ public sealed class SmplGarmentManager : MonoBehaviour
         garmentToSmplBoneMap = map.Count > 0 ? map : null;
         if (garmentToSmplBoneMap == null)
             Debug.LogWarning("Garment armature drive: no matching bones found between garment armature and SMPL rig.", garmentRoot);
+
+        if (clampBoneStretch && garmentToSmplBoneMap != null)
+        {
+            foreach (var kv in garmentToSmplBoneMap)
+            {
+                var g = kv.Key;
+                var s = kv.Value;
+                if (g == null || s == null) continue;
+                float d = Vector3.Distance(g.position, s.position) + Mathf.Max(0f, clampSlackMeters);
+                garmentBoneMaxDistance[g] = d;
+            }
+        }
     }
 
     static Transform FindArmatureRoot(Transform bone)
@@ -352,9 +377,17 @@ public sealed class SmplGarmentManager : MonoBehaviour
             var g = kv.Key;
             var s = kv.Value;
             if (g == null || s == null) continue;
-            // Prefer local space (less likely to stretch if hierarchies differ).
-            if (drivePositions) g.localPosition = s.localPosition;
-            g.localRotation = s.localRotation;
+            if (drivePositions) g.position = s.position;
+            if (driveWorldRotation) g.rotation = s.rotation;
+            else g.localRotation = s.localRotation;
+
+            if (clampBoneStretch && garmentBoneMaxDistance.TryGetValue(g, out var maxD))
+            {
+                var offset = g.position - s.position;
+                float len = offset.magnitude;
+                if (len > maxD && len > 1e-6f)
+                    g.position = s.position + offset * (maxD / len);
+            }
         }
     }
 
