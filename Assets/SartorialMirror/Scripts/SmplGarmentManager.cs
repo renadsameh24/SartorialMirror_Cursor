@@ -844,7 +844,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
             newBind[i] = b != null ? b.worldToLocalMatrix * meshToWorld : Matrix4x4.identity;
         }
         mesh.bindposes = newBind;
-        mesh.RecalculateBounds();
+        // Do not call mesh.RecalculateBounds() here: runtime meshes cloned from imported FBX are often
+        // non-readable and Unity throws "Not allowed to call RecalculateBounds() on mesh".
     }
 
     static int FindBoneIndexBySmplKey(Transform[] bones, string jKey)
