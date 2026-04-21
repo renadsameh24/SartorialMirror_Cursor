@@ -32,7 +32,7 @@ public sealed class GarmentSelectorUIRuntime : MonoBehaviour
         ClearButtons();
         if (garmentManager == null || !garmentManager.HasCatalog) return;
 
-        var font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
         for (int i = 0; i < garmentManager.catalog.garments.Count; i++)
         {
