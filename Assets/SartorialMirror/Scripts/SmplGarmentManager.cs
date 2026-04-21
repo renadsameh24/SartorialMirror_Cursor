@@ -133,6 +133,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
         ActiveGarmentInstance = Instantiate(entry.garmentPrefab, garmentsParent);
         ActiveGarmentInstance.name = $"Garment_{index}_{entry.garmentPrefab.name}";
         ActiveGarmentInstance.AddComponent<GarmentInstanceTag>();
+        ActiveGarmentInstance.transform.localPosition = Vector3.zero;
+        ActiveGarmentInstance.transform.localRotation = Quaternion.identity;
+        ActiveGarmentInstance.transform.localScale = Vector3.one;
 
         RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
 
