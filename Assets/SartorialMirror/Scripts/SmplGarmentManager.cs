@@ -27,6 +27,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     [Header("Diagnostics")]
     public bool logMissingBoneNames = true;
+    public bool logSpawnFailures = true;
 
     private Transform garmentsParent;
     private Dictionary<string, Transform> smplBonesByName;
@@ -85,15 +86,47 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     public bool TrySetActive(int index)
     {
-        if (!EnsureSmplRoot()) return false;
+        if (!EnsureSmplRoot())
+        {
+            if (logSpawnFailures)
+                Debug.LogWarning($"Garment spawn failed: SMPL root '{smplRootName}' not found in scene.", this);
+            return false;
+        }
         EnsureBoneMap();
         EnsureGarmentsParent();
 
-        if (catalog == null || catalog.garments == null) return false;
-        if (index < 0 || index >= catalog.garments.Count) return false;
+        if (catalog == null || catalog.garments == null)
+        {
+            if (logSpawnFailures)
+                Debug.LogWarning("Garment spawn failed: GarmentCatalog is not assigned (or garments list is null).", this);
+            return false;
+        }
+        if (catalog.garments.Count == 0)
+        {
+            if (logSpawnFailures)
+                Debug.LogWarning("Garment spawn failed: GarmentCatalog has 0 entries.", this);
+            return false;
+        }
+        if (index < 0 || index >= catalog.garments.Count)
+        {
+            if (logSpawnFailures)
+                Debug.LogWarning($"Garment spawn failed: index {index} is out of range (0..{catalog.garments.Count - 1}).", this);
+            return false;
+        }
 
         var entry = catalog.garments[index];
-        if (entry == null || entry.garmentPrefab == null) return false;
+        if (entry == null)
+        {
+            if (logSpawnFailures)
+                Debug.LogWarning($"Garment spawn failed: catalog entry {index} is null.", this);
+            return false;
+        }
+        if (entry.garmentPrefab == null)
+        {
+            if (logSpawnFailures)
+                Debug.LogWarning($"Garment spawn failed: catalog entry {index} '{entry.displayName}' has no prefab assigned.", this);
+            return false;
+        }
 
         ClearActive();
 

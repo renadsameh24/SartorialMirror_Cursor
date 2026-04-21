@@ -52,8 +52,17 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
 
     void Start()
     {
-        if (garmentManager != null && garmentManager.HasCatalog && autoSelectIndex >= 0)
-            garmentManager.TrySetActive(autoSelectIndex);
+        if (garmentManager == null) return;
+        if (autoSelectIndex < 0) return;
+
+        if (!garmentManager.HasCatalog)
+        {
+            Debug.LogWarning("SartorialMirrorBootstrap: Garment catalog is missing or empty. Assign `Assets/SartorialMirror/GarmentCatalog.asset` in the scene.", this);
+            return;
+        }
+
+        if (!garmentManager.TrySetActive(autoSelectIndex))
+            Debug.LogWarning($"SartorialMirrorBootstrap: autoSelectIndex {autoSelectIndex} failed to spawn garment. See prior warnings for the reason.", this);
     }
 }
 
