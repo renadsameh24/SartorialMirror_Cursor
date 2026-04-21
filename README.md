@@ -360,7 +360,10 @@ After importing a new garment FBX, its **Model Import** settings must match the 
 
 Recommended automated prep (weights copied from SMPL body mesh, then export):
 
-- Run `Tools/blender_golden_garment_prep.py` (see script header for `MODE=INSPECT` and env vars). Point `GarmentCatalog` at the new FBX/prefab under e.g. `Assets/garments_prepared/`.
+- **From two FBXs (SMPL + raw shirt), no .blend file:** run `Tools/blender_golden_garment_from_fbx.py` with `SMPL_FBX`, `GARMENT_FBX`, `EXPORT_FBX` set to absolute paths (see script header). This overwrites `Assets/garments_prepared/Flannel_SMPL_Skinned.fbx` when you point `EXPORT_FBX` there; reopen Unity to reimport.
+- **From an existing Blender scene:** run `Tools/blender_golden_garment_prep.py` (see script header for `MODE=INSPECT` and env vars).
+
+Point `GarmentCatalog` at the prepared FBX under `Assets/garments_prepared/` (already wired for `Flannel_SMPL_Skinned.fbx`).
 
 In Blender, avoid relying on **IK/constraints** for the final bind — Unity uses the exported rest pose and skin weights; parent the shirt to the SMPL armature with **Armature Deform** after weights are baked.
 
