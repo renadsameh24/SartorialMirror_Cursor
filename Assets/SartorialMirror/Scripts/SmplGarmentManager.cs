@@ -809,8 +809,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
         if (smplMag <= 1e-6f || garmentMag <= 1e-6f) return;
 
         float ratio = smplMag / garmentMag;
-        // Avoid crazy scaling; if it's far off, fix the FBX export/import.
-        if (ratio < 0.1f || ratio > 10f)
+        // Avoid truly pathological scaling; however, shirts often come in 10x-100x off due to FBX unit mismatches.
+        // If we skip scaling in those cases, the garment will look "huge" and bounds/skin can glitch.
+        if (ratio < 0.005f || ratio > 200f)
         {
             if (logSpawnFailures)
                 Debug.LogWarning(

@@ -13,6 +13,7 @@ using UnityEditor;
 /// Designed to avoid touching the existing pose pipeline.
 /// </summary>
 [ExecuteAlways]
+[DisallowMultipleComponent]
 public sealed class SartorialMirrorBootstrap : MonoBehaviour
 {
     [Header("SMPL")]
@@ -31,12 +32,41 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
 
     void OnEnable()
     {
+        DisableDuplicateBootstraps();
         EnsureComponents();
     }
 
     void Awake()
     {
+        DisableDuplicateBootstraps();
         EnsureComponents();
+    }
+
+    void DisableDuplicateBootstraps()
+    {
+        // Your screenshot shows multiple garments spawned, with one frozen.
+        // The only way that happens in this project is: multiple bootstraps/managers are active in the same scene,
+        // each spawning its own garment instance and driving different skeleton references.
+        var all = FindObjectsOfType<SartorialMirrorBootstrap>(true);
+        if (all == null || all.Length <= 1) return;
+
+        SartorialMirrorBootstrap keep = null;
+        foreach (var b in all)
+        {
+            if (b != null && b.isActiveAndEnabled)
+            {
+                keep = b;
+                break;
+            }
+        }
+        if (keep == null) keep = all[0];
+
+        if (keep != this)
+        {
+            if (Application.isPlaying)
+                Debug.LogWarning($"[SartorialMirrorBootstrap] Disabling duplicate bootstrap on '{gameObject.name}'. Keeping '{keep.gameObject.name}'.", this);
+            enabled = false;
+        }
     }
 
     void EnsureComponents()
