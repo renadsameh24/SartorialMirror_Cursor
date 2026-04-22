@@ -1122,7 +1122,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
             else
                 rot = s.rotation;
 
-            if (applyArmTwistFix && armTwistFixKeys != null && armTwistFixKeys.Length > 0)
+            if (applyArmTwistFix)
             {
                 var j = ResolveSmplKey(g != null ? g.name : "");
                 if (!string.IsNullOrEmpty(j) && TryGetTwistFixDegreesForKey(j, out var deg))
