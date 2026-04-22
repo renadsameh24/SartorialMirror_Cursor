@@ -756,17 +756,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
         if (snapGarmentToSmplPelvis)
             SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
 
-        if (autoScaleGarmentToSmplBounds)
-        {
-            AutoScaleGarmentInstanceToSmpl(ActiveGarmentInstance);
-            // Re-snap after scaling so pelvis still matches.
-            if (snapGarmentToSmplPelvis)
-                SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
-        }
-
-        // If this garment is already SMPL-skinned (bones named J00.. and mesh has multi-bone weights),
-        // prefer Remap mode. Drive mode can "double transform" or fight bind/rest assumptions and cause
-        // the exact stretching/twisting glitches users report even when weights are correct.
+        // Decide strategy BEFORE autoscale.
+        // If this garment is already SMPL-skinned (J00.. bones + healthy multi-bone weights), prefer Remap mode.
+        // Drive mode + autoscale can produce misleading results because the garment bones are external after remap.
         bool looksSmplSkinned = LooksLikeSmplSkinnedGarment(ActiveGarmentInstance);
         if (looksSmplSkinned && driveGarmentArmatureFromSmpl)
         {
@@ -781,6 +773,14 @@ public sealed class SmplGarmentManager : MonoBehaviour
             drivePositions = false;
             matchDrivenBonesToSmplWorld = true;
             driveWorldPositionInDriveMode = false;
+        }
+
+        if (autoScaleGarmentToSmplBounds)
+        {
+            AutoScaleGarmentInstanceToSmpl(ActiveGarmentInstance);
+            // Re-snap after scaling so pelvis still matches.
+            if (snapGarmentToSmplPelvis)
+                SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
         }
 
         // Drive mode with an empty map leaves bones on the prefab armature while we disable Animators → frozen mesh.
@@ -1000,9 +1000,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
             // Fall back to ratio-only scaling.
             applied = ratio;
         }
-        // In Remap mode, bones point at external SMPL bones. Scaling the garment root does NOT reliably scale the
-        // skinned result (since the bones are not under the garment). In that case, scale the mesh vertices instead.
-        bool scaleMeshesInsteadOfRoot = !driveGarmentArmatureFromSmpl;
+        // If bones point at external SMPL bones (remap), scaling the garment root does NOT reliably scale the skinned result.
+        // Detect this by checking whether the skinned rootBone lives under the garment root.
+        bool bonesAreExternal = garmentSmr.rootBone != null && !garmentSmr.rootBone.IsChildOf(garmentRoot.transform);
+        bool scaleMeshesInsteadOfRoot = bonesAreExternal;
         if (scaleMeshesInsteadOfRoot)
         {
             ScaleGarmentMeshesVertices(garmentRoot, applied);
