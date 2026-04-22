@@ -48,6 +48,10 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
         garmentManager.smplRootName = smplRootName;
         garmentManager.catalog = garmentCatalog;
 
+#if UNITY_EDITOR
+        AutoLinkGarmentCatalogInEditor();
+#endif
+
         if (hideBodyMesh)
         {
             var hider = GetComponent<SmplBodyMeshHider>();
@@ -75,6 +79,29 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
             EditorUtility.SetDirty(gameObject);
 #endif
     }
+
+#if UNITY_EDITOR
+    void AutoLinkGarmentCatalogInEditor()
+    {
+        if (Application.isPlaying) return;
+        if (garmentCatalog == null) return;
+        if (garmentCatalog.garments == null || garmentCatalog.garments.Count == 0) return;
+
+        const string preparedFbxPath = "Assets/garments_prepared/Flannel_OriginalRig_Drive.fbx";
+        var modelRoot = AssetDatabase.LoadAssetAtPath<GameObject>(preparedFbxPath);
+        if (modelRoot == null) return;
+
+        var entry0 = garmentCatalog.garments[0];
+        if (entry0 == null) return;
+
+        if (entry0.garmentPrefab == modelRoot) return;
+
+        entry0.displayName = "Flannel Shirt (Original rig, Drive mode)";
+        entry0.garmentPrefab = modelRoot;
+        EditorUtility.SetDirty(garmentCatalog);
+        AssetDatabase.SaveAssets();
+    }
+#endif
 
     void Start()
     {
