@@ -56,6 +56,11 @@ echo "Blender: $BLENDER"
 # Weight copy after DT: FORCE_KD=1 runs surface transfer (default WEIGHT_COPY_METHOD=BVH for sleeves).
 export FORCE_KD="${FORCE_KD:-1}"
 export WEIGHT_COPY_METHOD="${WEIGHT_COPY_METHOD:-BVH}"
+# Match garment size to SMPL in Blender (bone + bbox metrics; wide clamp for cm/mm vs meter FBX).
+export AUTO_SCALE="${AUTO_SCALE:-1}"
+export AUTO_SCALE_MODE="${AUTO_SCALE_MODE:-combined}"
+export AUTO_SCALE_S_MIN="${AUTO_SCALE_S_MIN:-0.001}"
+export AUTO_SCALE_S_MAX="${AUTO_SCALE_S_MAX:-500}"
 export DISALLOW_BONES="${DISALLOW_BONES:-J15,J22,J23}"
 export AUTO_ALIGN="${AUTO_ALIGN:-1}"
 # Upper-body only for shirts: torso + arms (prevents leg weights).

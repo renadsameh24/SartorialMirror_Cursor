@@ -28,6 +28,9 @@ Optional env:
   WEIGHT_COPY_METHOD=BVH               # BVH = nearest triangle on body surface (better sleeves); VERTEX = nearest body vertex
   DISALLOW_BONES=J15,J22,J23           # comma-separated vertex-group names to zero out after transfer (default: head + hands)
   AUTO_ALIGN=1                         # translate garment to body bbox center before weight transfer (recommended)
+  AUTO_SCALE_MODE=combined             # bbox | max_axis | torso | shoulder | combined (see auto_scale_garment_to_body)
+  AUTO_SCALE_S_MIN=0.001               # min uniform scale factor (wide unit mismatches)
+  AUTO_SCALE_S_MAX=500                 # max uniform scale factor
   ALLOW_BONES=J00,J03,J06,J09,J12,J16,J17,J18,J19,J20,J21  # upper-body only; prevents leg weights on shirts
   REGION_REWEIGHT=1                    # post-process weights: torso vs sleeves by nearest key bones
   MAX_WRIST_WEIGHT=0.25                # cap wrist weight on sleeve verts; excess moves to elbow/shoulder
@@ -38,7 +41,9 @@ Optional env:
 
 from __future__ import annotations
 
+import math
 import os
+import statistics
 import sys
 
 import bpy
@@ -67,6 +72,9 @@ DISALLOW_BONES = tuple(
 )
 AUTO_ALIGN = os.environ.get("AUTO_ALIGN", "1").strip() in ("1", "true", "yes", "on")
 AUTO_SCALE = os.environ.get("AUTO_SCALE", "1").strip() in ("1", "true", "yes", "on")
+AUTO_SCALE_MODE = (os.environ.get("AUTO_SCALE_MODE", "combined") or "combined").strip().lower()
+AUTO_SCALE_S_MIN = float(os.environ.get("AUTO_SCALE_S_MIN", "0.001").strip() or "0.001")
+AUTO_SCALE_S_MAX = float(os.environ.get("AUTO_SCALE_S_MAX", "500").strip() or "500")
 ALLOW_BONES = tuple(
     s.strip()
     for s in (
@@ -217,36 +225,135 @@ def world_bbox_size(obj: bpy.types.Object) -> Vector:
     return mx - mn
 
 
-def auto_scale_garment_to_body(garment: bpy.types.Object, body: bpy.types.Object) -> None:
+def find_armature_bone(arm: bpy.types.Object, name: str) -> bpy.types.Bone | None:
+    if arm is None or arm.type != "ARMATURE" or arm.data is None:
+        return None
+    key = name.strip()
+    if key in arm.data.bones:
+        return arm.data.bones[key]
+    kl = key.lower()
+    for b in arm.data.bones:
+        if b.name.lower() == kl:
+            return b
+    return None
+
+
+def bone_head_world(arm: bpy.types.Object, bone_name: str) -> Vector | None:
+    b = find_armature_bone(arm, bone_name)
+    if b is None:
+        return None
+    return arm.matrix_world @ Vector(b.head_local)
+
+
+def bone_pair_world_dist(arm: bpy.types.Object, a: str, b: str) -> float | None:
+    pa = bone_head_world(arm, a)
+    pb = bone_head_world(arm, b)
+    if pa is None or pb is None:
+        return None
+    d = (pa - pb).length
+    return float(d) if d > 1e-12 else None
+
+
+def _clamp_scale(s: float) -> float:
+    lo = max(1e-9, float(AUTO_SCALE_S_MIN))
+    hi = max(lo * 2.0, float(AUTO_SCALE_S_MAX))
+    return min(max(s, lo), hi)
+
+
+def _scale_candidates(arm: bpy.types.Object, garment: bpy.types.Object, body: bpy.types.Object) -> dict[str, float]:
+    """Several uniform-scale ratios (garment → body); median in 'combined' is robust to odd FBX units."""
+    bpy.context.view_layer.depsgraph.update()
+    gsz = world_bbox_size(garment)
+    bsz = world_bbox_size(body)
+    out: dict[str, float] = {}
+
+    g_diag = float(gsz.length)
+    b_diag = float(bsz.length)
+    if g_diag > 1e-12 and b_diag > 1e-12:
+        out["bbox_diag"] = b_diag / g_diag
+
+    g_max = max(abs(gsz.x), abs(gsz.y), abs(gsz.z))
+    b_max = max(abs(bsz.x), abs(bsz.y), abs(bsz.z))
+    if g_max > 1e-12 and b_max > 1e-12:
+        out["max_axis"] = b_max / g_max
+
+    torso = bone_pair_world_dist(arm, "J00", "J12") or bone_pair_world_dist(arm, "J00", "J15")
+    if torso is not None and g_max > 1e-12:
+        out["torso_vs_garment_max"] = torso / g_max
+
+    shoulder = bone_pair_world_dist(arm, "J16", "J17")
+    g_hz = math.sqrt(max(0.0, gsz.x) ** 2 + max(0.0, gsz.z) ** 2)
+    if shoulder is not None and g_hz > 1e-12:
+        out["shoulder_vs_garment_xz"] = shoulder / g_hz
+
+    return out
+
+
+def auto_scale_garment_to_body(
+    garment: bpy.types.Object, body: bpy.types.Object, arm: bpy.types.Object | None
+) -> None:
     """
-    Many raw garment FBXs come in with a different unit scale than the SMPL FBX.
-    AUTO_SCALE uniformly scales the garment so its bbox magnitude matches the body.
+    Many raw garment FBXs use different units than the SMPL FBX.
+    Uniformly scale the garment mesh object before parenting to SMPL.
+
+    Modes (AUTO_SCALE_MODE):
+      - bbox: legacy — world bbox diagonal only (same idea as early Unity heuristic).
+      - max_axis: ratio of largest world AABB side (helps flat/thin meshes).
+      - torso: SMPL J00→J12 (or J00→J15) vs garment largest AABB side.
+      - shoulder: SMPL J16→J17 vs garment horizontal XZ extent of world bbox.
+      - combined: median of all metrics that exist (robust when one bbox axis lies).
     """
     if not AUTO_SCALE:
         return
     if garment is None or body is None:
         return
+    if arm is None:
+        log("AUTO_SCALE: no armature; falling back to bbox_diag only.")
+        arm = pick_armature()
 
-    bpy.context.view_layer.depsgraph.update()
-    gsz = world_bbox_size(garment)
-    bsz = world_bbox_size(body)
+    cands = _scale_candidates(arm, garment, body)
+    mode = AUTO_SCALE_MODE
+    s: float | None = None
 
-    g = float(gsz.length)
-    b = float(bsz.length)
-    if g <= 1e-8 or b <= 1e-8:
+    if mode == "bbox":
+        s = cands.get("bbox_diag")
+    elif mode == "max_axis":
+        s = cands.get("max_axis")
+    elif mode == "torso":
+        s = cands.get("torso_vs_garment_max")
+    elif mode == "shoulder":
+        s = cands.get("shoulder_vs_garment_xz")
+    elif mode == "combined":
+        vals = sorted(float(v) for v in cands.values() if math.isfinite(v) and v > 0.0)
+        if len(vals) >= 2:
+            s = float(statistics.median(vals))
+        elif len(vals) == 1:
+            s = vals[0]
+    else:
+        log(f"AUTO_SCALE_MODE={mode!r} unknown; using combined.")
+        mode = "combined"
+        vals = sorted(float(v) for v in cands.values() if math.isfinite(v) and v > 0.0)
+        s = float(statistics.median(vals)) if vals else None
+
+    if s is None or not math.isfinite(s) or s <= 0.0:
+        s = cands.get("bbox_diag")
+    if s is None or not math.isfinite(s) or s <= 0.0:
+        log("AUTO_SCALE: could not compute a scale factor; skipping.")
         return
 
-    s = b / g
-    # Avoid pathological scaling; if it's wildly off, better to fix export settings upstream.
-    if s < 0.25 or s > 4.0:
-        log(f"AUTO_SCALE=1: computed scale {s:.4f} looks extreme; skipping.")
-        return
+    s0 = s
+    s = _clamp_scale(s)
+    if abs(s - s0) > 1e-6:
+        log(f"AUTO_SCALE: raw factor {s0:.6f} clamped to [{AUTO_SCALE_S_MIN:g}, {AUTO_SCALE_S_MAX:g}] → {s:.6f}")
 
     ensure_active(garment)
     garment.scale = garment.scale * s
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     bpy.context.view_layer.depsgraph.update()
-    log(f"AUTO_SCALE=1: scaled garment by {s:.4f} to match body bbox size.")
+    log(
+        f"AUTO_SCALE=1 mode={mode!r}: scaled garment by {s:.6f} "
+        f"(candidates={{{', '.join(f'{k}={v:.4f}' for k, v in sorted(cands.items()))}}})."
+    )
 
 
 def auto_align_garment_to_body(garment: bpy.types.Object, body: bpy.types.Object) -> None:
@@ -874,7 +981,7 @@ def run() -> int:
     log(f"Armature (keep): {arm.name}")
     log(f"Body (weight source): {body.name} | body vgroups={len(body.vertex_groups)}")
     log(f"Garment (target): {garment.name}")
-    auto_scale_garment_to_body(garment, body)
+    auto_scale_garment_to_body(garment, body, arm)
 
     if KEEP_ORIGINAL_RIG:
         garment_arm = find_garment_armature_for_mesh(garment)
