@@ -36,22 +36,21 @@ public class SpheresToBones_FKDriver : MonoBehaviour
     [Header("Smoothing (arms / default)")]
     [Range(0f, 1f)] public float rotLerp = 1f; // 1 = exact, 0.3 = smoother
 
-    [Header("Torso / chest restraint")]
-    [Tooltip("When on, segments whose parent bone name matches Torso Name Tokens use Torso Rot Lerp instead of Rot Lerp (arms stay at full Rot Lerp).")]
+    [Header("Lower trunk restraint (chest uses normal Rot Lerp)")]
+    [Tooltip("When on, only segments whose bone name matches Lower Trunk Name Tokens use Torso Rot Lerp / degree cap. Chest, mid/upper spine, and arms use Rot Lerp.")]
     public bool autoRestrainTorsoByBoneName = true;
 
-    [Tooltip("Slerp factor for torso/chest segments only. Lower = more restrained trunk vs spheres.")]
+    [Tooltip("Slerp factor for lower-trunk segments only (pelvis / first spine). Chest & arms use Rot Lerp.")]
     [Range(0f, 1f)] public float torsoRotLerp = 0.4f;
 
-    [Tooltip("If > 0, cap how many degrees the torso bone can rotate toward the sphere target in one LateUpdate (0 = no cap).")]
+    [Tooltip("If > 0, cap degrees per LateUpdate for lower-trunk segments only (0 = no cap).")]
     [Range(0f, 180f)] public float torsoMaxDegreesPerFrame = 18f;
 
-    [Tooltip("Case-insensitive substrings on segment bone.name (e.g. SMPL J00 pelvis, J03/J06/J09 spine, J12 neck).")]
+    [Tooltip("Default: pelvis + first spine step only. Add tokens here if your rig names differ; do NOT add J06/J09/chest/neck if you want chest free.")]
     public string[] torsoNameTokens =
     {
         "pelvis", "Pelvis", "J00", "hips", "Hips",
-        "spine", "Spine", "J03", "J06", "J09",
-        "chest", "Chest", "J12", "neck", "Neck"
+        "J03"
     };
 
     void LateUpdate()
@@ -91,7 +90,7 @@ public class SpheresToBones_FKDriver : MonoBehaviour
 
             Quaternion next = t >= 1f ? targetRot : Quaternion.Slerp(s.bone.rotation, targetRot, t);
 
-            if (IsTorsoSegment(s) && torsoMaxDegreesPerFrame > 0.1f)
+            if (IsLowerTrunkSegment(s) && torsoMaxDegreesPerFrame > 0.1f)
                 next = ClampRotationStep(s.bone.rotation, next, torsoMaxDegreesPerFrame);
 
             s.bone.rotation = next;
@@ -102,7 +101,7 @@ public class SpheresToBones_FKDriver : MonoBehaviour
         }
     }
 
-    bool IsTorsoSegment(Segment s)
+    bool IsLowerTrunkSegment(Segment s)
     {
         if (!autoRestrainTorsoByBoneName || s.bone == null) return false;
         return BoneNameMatchesTorsoTokens(s.bone.name);
@@ -122,7 +121,7 @@ public class SpheresToBones_FKDriver : MonoBehaviour
 
     float EffectiveRotLerp(Segment s)
     {
-        float baseLerp = IsTorsoSegment(s) ? torsoRotLerp : rotLerp;
+        float baseLerp = IsLowerTrunkSegment(s) ? torsoRotLerp : rotLerp;
         if (s.rotLerpScale > 0f)
             baseLerp *= Mathf.Clamp01(s.rotLerpScale);
         return Mathf.Clamp01(baseLerp);
