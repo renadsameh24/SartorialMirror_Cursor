@@ -936,11 +936,23 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
 
         float mult = float.IsFinite(autoScaleMultiplier) ? autoScaleMultiplier : 1f;
+        // Guard against accidental tiny multipliers (can underflow sizes to ~0 and make the garment disappear).
         if (mult <= 0f) mult = 1f;
+        mult = Mathf.Clamp(mult, 0.001f, 1000f);
 
         // Apply in up to 2 passes. Some FBXs have nested scaling; a single multiply can still leave the world size off.
         // We measure again after scaling and re-apply once if needed.
         float applied = ratio * mult;
+        if (applied < 0.001f || applied > 1000f)
+        {
+            if (logSpawnFailures)
+                Debug.LogWarning(
+                    $"[SmplGarmentManager] Auto-scale effective factor {applied:E3} is implausible (ratio={ratio:E3} mult={mult:E3}). " +
+                    "Reset autoScaleMultiplier to 1 unless you intentionally need a unit conversion.",
+                    garmentRoot);
+            // Fall back to ratio-only scaling.
+            applied = ratio;
+        }
         var pre = garmentRoot.transform.localScale;
         garmentRoot.transform.localScale = pre * applied;
 
