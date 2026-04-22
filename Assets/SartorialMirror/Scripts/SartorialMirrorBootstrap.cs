@@ -1,5 +1,9 @@
 using UnityEngine;
 
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
 /// <summary>
 /// One-drop runtime bootstrap:
 /// - Webcam background (UGUI)
@@ -8,6 +12,7 @@ using UnityEngine;
 /// 
 /// Designed to avoid touching the existing pose pipeline.
 /// </summary>
+[ExecuteAlways]
 public sealed class SartorialMirrorBootstrap : MonoBehaviour
 {
     [Header("SMPL")]
@@ -24,7 +29,17 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
 
     private SmplGarmentManager garmentManager;
 
+    void OnEnable()
+    {
+        EnsureComponents();
+    }
+
     void Awake()
+    {
+        EnsureComponents();
+    }
+
+    void EnsureComponents()
     {
         garmentManager = GetComponent<SmplGarmentManager>();
         if (garmentManager == null) garmentManager = gameObject.AddComponent<SmplGarmentManager>();
@@ -39,6 +54,12 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
             if (hider == null) hider = gameObject.AddComponent<SmplBodyMeshHider>();
             hider.smplRoot = smplRoot;
         }
+        else
+        {
+            var hider = GetComponent<SmplBodyMeshHider>();
+            if (hider != null && Application.isPlaying == false)
+                hider.enabled = false;
+        }
 
         if (showWebcamBackground)
         {
@@ -48,6 +69,11 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
 
         if (GetComponent<GarmentSelectorUIRuntime>() == null)
             gameObject.AddComponent<GarmentSelectorUIRuntime>();
+
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+            EditorUtility.SetDirty(gameObject);
+#endif
     }
 
     void Start()
