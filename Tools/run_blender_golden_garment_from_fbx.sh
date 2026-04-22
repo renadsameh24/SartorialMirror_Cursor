@@ -10,7 +10,8 @@
 # Output goes into THIS repo by default: Assets/garments_prepared/Flannel_SMPL_Skinned.fbx
 # — that folder is inside your Unity project when you open SartorialMirror_Cursor in Unity.
 #
-# Or set GARMENT_FBX yourself and omit the argument (defaults shown below).
+# With no arguments: uses GARMENT_FBX from the environment, else the bundled shirt
+#   Assets/garments/VR4D030312_ShirtFlannelBWWoman_Normal.fbx when that file exists.
 #
 # After export: open Unity, let it reimport, then:
 #   Menu → SartorialMirror → Link prepared Flannel FBX to GarmentCatalog
@@ -23,6 +24,8 @@ cd "$REPO"
 
 export SMPL_FBX="${SMPL_FBX:-$REPO/Assets/SMPL/Models/SMPL_neutral_rig_GOLDEN.fbx}"
 export EXPORT_FBX="${EXPORT_FBX:-$REPO/Assets/garments_prepared/Flannel_SMPL_Skinned.fbx}"
+# Default source shirt in this repo (when you run the helper with no args).
+_DEFAULT_SHIRT="$REPO/Assets/garments/VR4D030312_ShirtFlannelBWWoman_Normal.fbx"
 
 # First CLI argument wins over a stale GARMENT_FBX in the environment.
 if [[ $# -ge 1 ]]; then
@@ -39,7 +42,17 @@ if [[ $# -ge 1 ]]; then
     export GARMENT_FBX="$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$G1")"
   fi
 else
-  export GARMENT_FBX="${GARMENT_FBX:-}"
+  if [[ -n "${GARMENT_FBX:-}" ]]; then
+    :
+  elif [[ -f "$_DEFAULT_SHIRT" ]]; then
+    if command -v realpath &>/dev/null; then
+      export GARMENT_FBX="$(realpath "$_DEFAULT_SHIRT")"
+    else
+      export GARMENT_FBX="$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$_DEFAULT_SHIRT")"
+    fi
+  else
+    export GARMENT_FBX=""
+  fi
 fi
 
 if [[ ! -f "$SMPL_FBX" ]]; then
