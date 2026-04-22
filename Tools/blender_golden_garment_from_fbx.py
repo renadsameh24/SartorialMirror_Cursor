@@ -761,6 +761,26 @@ def delete_extra_armatures(keep: bpy.types.Object) -> None:
             bpy.data.objects.remove(o, do_unlink=True)
 
 
+def find_garment_armature_for_mesh(mesh_obj: bpy.types.Object) -> bpy.types.Object | None:
+    """Best-effort: find the armature that actually skins this mesh."""
+    if mesh_obj is None:
+        return None
+
+    # 1) Armature modifier target
+    for mod in mesh_obj.modifiers:
+        if mod.type == "ARMATURE" and getattr(mod, "object", None) is not None:
+            return mod.object
+
+    # 2) Parent chain
+    p = mesh_obj.parent
+    while p is not None:
+        if p.type == "ARMATURE":
+            return p
+        p = p.parent
+
+    return None
+
+
 def export_fbx(arm_obj: bpy.types.Object, mesh_objs: list[bpy.types.Object]) -> None:
     bpy.ops.object.select_all(action="DESELECT")
     arm_obj.select_set(True)
@@ -813,6 +833,24 @@ def run() -> int:
     log(f"Body (weight source): {body.name} | body vgroups={len(body.vertex_groups)}")
     log(f"Garment (target): {garment.name}")
 
+    if KEEP_ORIGINAL_RIG:
+        garment_arm = find_garment_armature_for_mesh(garment)
+        if garment_arm is None:
+            log(
+                "KEEP_ORIGINAL_RIG=1 requested, but garment has no armature modifier/parent. "
+                "Cannot preserve rig; aborting."
+            )
+            return 2
+
+        log(
+            f"KEEP_ORIGINAL_RIG=1: exporting garment with its OWN rig '{garment_arm.name}' "
+            "(no weight transfer; preserves rest/bindposes)."
+        )
+        export_fbx(garment_arm, [garment])
+        log("Done.")
+        return 0
+
+    # Normal pipeline: keep SMPL armature, delete garment rigs, transfer weights to SMPL bone names.
     delete_extra_armatures(arm)
 
     if garment.parent and garment.parent.type == "ARMATURE" and garment.parent != arm:
@@ -822,13 +860,6 @@ def run() -> int:
     ensure_active(garment)
     garment.parent = arm
     garment.matrix_parent_inverse = arm.matrix_world.inverted()
-
-    if KEEP_ORIGINAL_RIG:
-        log("KEEP_ORIGINAL_RIG=1: skipping weight transfer; exporting garment with original bindposes/weights.")
-        ensure_armature_modifier(garment, arm)
-        export_fbx(arm, [garment])
-        log("Done.")
-        return 0
 
     strip_armature_modifiers(garment)
     clear_vertex_groups(garment)
