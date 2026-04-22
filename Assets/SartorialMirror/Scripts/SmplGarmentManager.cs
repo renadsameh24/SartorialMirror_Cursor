@@ -706,7 +706,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
             return false;
         }
 
-        LogCatalogPrefabSource(entry, index);
+        LogCatalogPrefabSource(entry.displayName, entry.garmentPrefab, index);
 
         ClearActive();
 
@@ -757,16 +757,16 @@ public sealed class SmplGarmentManager : MonoBehaviour
     }
 
 #if UNITY_EDITOR
-    void LogCatalogPrefabSource(GarmentCatalog.GarmentEntry entry, int index)
+    void LogCatalogPrefabSource(string displayName, GameObject prefab, int index)
     {
-        if (entry == null || entry.garmentPrefab == null) return;
+        if (prefab == null) return;
 
         try
         {
-            string prefabPath = AssetDatabase.GetAssetPath(entry.garmentPrefab);
+            string prefabPath = AssetDatabase.GetAssetPath(prefab);
             string guid = string.IsNullOrEmpty(prefabPath) ? "" : AssetDatabase.AssetPathToGUID(prefabPath);
             Debug.Log(
-                $"[SmplGarmentManager] Spawning catalog[{index}] '{entry.displayName}': prefab='{entry.garmentPrefab.name}', path='{prefabPath}', guid='{guid}'",
+                $"[SmplGarmentManager] Spawning catalog[{index}] '{displayName}': prefab='{prefab.name}', path='{prefabPath}', guid='{guid}'",
                 this);
         }
         catch (Exception ex)
@@ -775,7 +775,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
     }
 #else
-    void LogCatalogPrefabSource(GarmentCatalog.GarmentEntry entry, int index) { }
+    void LogCatalogPrefabSource(string displayName, GameObject prefab, int index) { }
 #endif
 
     static void DisableGarmentAnimators(GameObject garmentRoot)
