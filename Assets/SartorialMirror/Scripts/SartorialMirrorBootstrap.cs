@@ -74,6 +74,17 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
         garmentManager = GetComponent<SmplGarmentManager>();
         if (garmentManager == null) garmentManager = gameObject.AddComponent<SmplGarmentManager>();
 
+        // Always install the finite guard in play mode. This prevents Unity GUI assertion spam if any upstream
+        // joint source emits NaN/Inf and makes the project debuggable without manual scene edits.
+        if (Application.isPlaying)
+        {
+            var guard = GetComponent<FiniteTransformGuard>();
+            if (guard == null) guard = gameObject.AddComponent<FiniteTransformGuard>();
+            guard.root = smplRoot != null ? smplRoot : null;
+            guard.checkEveryFrame = true;
+            guard.disableOffendingComponents = true;
+        }
+
         garmentManager.smplRoot = smplRoot;
         garmentManager.smplRootName = smplRootName;
         garmentManager.catalog = garmentCatalog;
