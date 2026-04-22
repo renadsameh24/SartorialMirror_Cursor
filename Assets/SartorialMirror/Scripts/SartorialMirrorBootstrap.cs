@@ -28,6 +28,10 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
     public bool showWebcamBackground = true;
     public bool hideBodyMesh = true;
 
+    [Header("Stability (recommended)")]
+    [Tooltip("If enabled, installs a clean baseline pipeline in Play Mode: disables conflicting pose scripts and forces garment remap mode.")]
+    public bool useCleanGarmentPipeline = true;
+
     private SmplGarmentManager garmentManager;
 
     void OnEnable()
@@ -78,6 +82,14 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
         // joint source emits NaN/Inf and makes the project debuggable without manual scene edits.
         if (Application.isPlaying)
         {
+            if (useCleanGarmentPipeline)
+            {
+                var clean = GetComponent<CleanGarmentPipelineInstaller>();
+                if (clean == null) clean = gameObject.AddComponent<CleanGarmentPipelineInstaller>();
+                clean.smplRootName = smplRootName;
+                clean.spawnGarmentIndex = autoSelectIndex;
+            }
+
             var guard = GetComponent<FiniteTransformGuard>();
             if (guard == null) guard = gameObject.AddComponent<FiniteTransformGuard>();
             guard.root = smplRoot != null ? smplRoot : null;
