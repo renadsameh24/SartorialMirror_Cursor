@@ -447,6 +447,27 @@ public sealed class SmplGarmentManager : MonoBehaviour
         if (smplRoot == null) return;
 
         var armatureRoot = FindSmplDrivenArmatureRoot();
+
+        // Hard guarantee: if FK is present, the SMPL bone map MUST be built from the FK-driven armature subtree.
+        // This prevents a named/duplicate armature from ever winning.
+        var fk = FindSpheresToBonesFkInScene(smplRoot);
+        if (fk != null && fk.rootBone != null && fk.rootBone.IsChildOf(smplRoot))
+        {
+            var fkArmature = FindDirectChildOfSmplRootOnPathToDescendant(smplRoot, fk.rootBone);
+            if (fkArmature != null && !IsTransformUnderGarments(fkArmature))
+            {
+                if (armatureRoot == null || !fk.rootBone.IsChildOf(armatureRoot))
+                {
+                    smplArmatureRootOverride = fkArmature;
+                    armatureRoot = fkArmature;
+                    if (logSpawnFailures)
+                        Debug.LogWarning(
+                            $"[SmplGarmentManager] Overriding SMPL armature root to FK-driven subtree '{fkArmature.name}' " +
+                            $"(FK rootBone='{fk.rootBone.name}'). This avoids duplicate/static armatures.",
+                            this);
+                }
+            }
+        }
         if (armatureRoot != null)
         {
             resolvedSmplArmatureRoot = armatureRoot;
