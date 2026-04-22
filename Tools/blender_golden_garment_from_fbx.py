@@ -32,6 +32,7 @@ Optional env:
   REGION_REWEIGHT=1                    # post-process weights: torso vs sleeves by nearest key bones
   MAX_WRIST_WEIGHT=0.25                # cap wrist weight on sleeve verts; excess moves to elbow/shoulder
   SLEEVES_ARM_ONLY=1                   # if 1, sleeves keep only arm-chain bones (no spine/neck bleed)
+  PRESERVE_GARMENT_REST=1              # keep garment transform exactly; temporarily move BODY for transfer instead
 """
 
 from __future__ import annotations
@@ -78,6 +79,7 @@ ALLOW_BONES = tuple(
 REGION_REWEIGHT = os.environ.get("REGION_REWEIGHT", "1").strip() in ("1", "true", "yes", "on")
 MAX_WRIST_WEIGHT = float(os.environ.get("MAX_WRIST_WEIGHT", "0.25").strip() or "0.25")
 SLEEVES_ARM_ONLY = os.environ.get("SLEEVES_ARM_ONLY", "1").strip() in ("1", "true", "yes", "on")
+PRESERVE_GARMENT_REST = os.environ.get("PRESERVE_GARMENT_REST", "1").strip() in ("1", "true", "yes", "on")
 
 
 def objs_by_type(t: str):
@@ -205,7 +207,7 @@ def world_bbox_center(obj: bpy.types.Object) -> Vector:
 
 def auto_align_garment_to_body(garment: bpy.types.Object, body: bpy.types.Object) -> None:
     """Translate garment so its bbox center matches the body's bbox center (world space)."""
-    if not AUTO_ALIGN:
+    if not AUTO_ALIGN or PRESERVE_GARMENT_REST:
         return
     try:
         gc = world_bbox_center(garment)
@@ -215,6 +217,25 @@ def auto_align_garment_to_body(garment: bpy.types.Object, body: bpy.types.Object
         log(f"AUTO_ALIGN=1: moved garment by {tuple(round(x, 4) for x in delta)}")
     except Exception as e:
         log(f"AUTO_ALIGN failed: {e}")
+
+
+def align_body_to_garment_temporarily(body: bpy.types.Object, garment: bpy.types.Object) -> Vector | None:
+    """
+    If PRESERVE_GARMENT_REST is enabled, we keep garment exactly where it imported (rest pose stays identical),
+    and temporarily translate the BODY to overlap it for weight transfer. Returns the delta applied to body.
+    """
+    if not PRESERVE_GARMENT_REST:
+        return None
+    try:
+        bc = world_bbox_center(body)
+        gc = world_bbox_center(garment)
+        delta = gc - bc
+        body.location = body.location + delta
+        log(f"PRESERVE_GARMENT_REST=1: moved BODY by {tuple(round(x, 4) for x in delta)} for transfer")
+        return delta
+    except Exception as e:
+        log(f"PRESERVE_GARMENT_REST body-align failed: {e}")
+        return None
 
 
 def strip_armature_modifiers(obj: bpy.types.Object) -> None:
@@ -805,9 +826,15 @@ def run() -> int:
     ensure_vertex_groups_for_armature_and_body(garment, arm, body)
     auto_align_garment_to_body(garment, body)
 
+    body_delta = align_body_to_garment_temporarily(body, garment)
+
     dt = add_data_transfer(garment, body, DT_VERT_MAPPING)
     bpy.context.view_layer.depsgraph.update()
     apply_modifier(garment, dt.name)
+
+    if body_delta is not None:
+        body.location = body.location - body_delta
+        log("PRESERVE_GARMENT_REST=1: restored BODY transform after transfer")
 
     infl = count_influencing_vertex_groups(garment)
     log(f"After Data Transfer: influencing vertex groups (any vert) = {infl}")
