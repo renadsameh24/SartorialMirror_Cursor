@@ -1,17 +1,8 @@
 using System;
 using UnityEngine;
 
-/// <summary>
-/// Runs after default Animators (0) and after sphere-follow (≈1000) so sphere-driven rotations win.
-/// Must finish before <see cref="SmplGarmentManager"/> (3200) so SMPL bones are final for garment skinning.
-/// </summary>
-[DefaultExecutionOrder(2500)]
 public class SpheresToBones_FKDriver : MonoBehaviour
 {
-    static bool Finite(Vector3 v) => float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
-
-    private bool _loggedNonFiniteOnce = false;
-
     [Serializable]
     public class Segment
     {
@@ -39,107 +30,11 @@ public class SpheresToBones_FKDriver : MonoBehaviour
     [Header("Smoothing")]
     [Range(0f, 1f)] public float rotLerp = 1f; // 1 = exact, 0.3 = smoother
 
-    public enum MirrorAxis
-    {
-        None,
-        RootX,
-        RootY,
-        RootZ
-    }
-
-    [Header("Mirror / coordinate fix")]
-    [Tooltip("Mirror the incoming sphere vectors/positions across the SMPL root local axis. " +
-             "Use this when left/right looks swapped or arms move 'the opposite way' relative to the camera.")]
-    public MirrorAxis mirrorAxis = MirrorAxis.None;
-
-    [Tooltip("Legacy toggle (kept for existing scenes). If enabled, forces Mirror Axis = RootX at runtime.")]
-    public bool mirrorAcrossRootX = false;
-
-    [Header("Left/Right swap (data fix)")]
-    [Tooltip("If enabled, swaps left/right sphere transforms (e.g. J_l_* <-> J_r_*) before driving bones. Use this when arms are flipped even with Mirror Axis=None.")]
-    public bool swapLeftRightSpheres = false;
-
-    private Transform _sphereLookupRoot;
-    private System.Collections.Generic.Dictionary<string, Transform> _spheresByName;
-
     void LateUpdate()
     {
-        Transform root = rootBone != null ? rootBone.root : null;
-        if (rootBone != null) root = rootBone; // mirror in rootBone space by default (stable even if rig is nested)
-
-        // Back-compat: old scenes used mirrorAcrossRootX.
-        if (mirrorAcrossRootX && mirrorAxis == MirrorAxis.None)
-            mirrorAxis = MirrorAxis.RootX;
-
-        Vector3 MirrorDir(Vector3 worldDir)
-        {
-            if (mirrorAxis == MirrorAxis.None || root == null) return worldDir;
-            var local = root.InverseTransformDirection(worldDir);
-            switch (mirrorAxis)
-            {
-                case MirrorAxis.RootX: local.x = -local.x; break;
-                case MirrorAxis.RootY: local.y = -local.y; break;
-                case MirrorAxis.RootZ: local.z = -local.z; break;
-            }
-            return root.TransformDirection(local);
-        }
-
-        Vector3 MirrorPos(Vector3 worldPos)
-        {
-            if (mirrorAxis == MirrorAxis.None || root == null) return worldPos;
-            var local = root.InverseTransformPoint(worldPos);
-            switch (mirrorAxis)
-            {
-                case MirrorAxis.RootX: local.x = -local.x; break;
-                case MirrorAxis.RootY: local.y = -local.y; break;
-                case MirrorAxis.RootZ: local.z = -local.z; break;
-            }
-            return root.TransformPoint(local);
-        }
-
-        Transform MaybeSwapSphere(Transform t)
-        {
-            if (!swapLeftRightSpheres || t == null) return t;
-            string n = t.name;
-
-            string swapped = n;
-            if (n.Contains("_l_")) swapped = n.Replace("_l_", "_r_");
-            else if (n.Contains("_r_")) swapped = n.Replace("_r_", "_l_");
-            else if (n.Contains("Left")) swapped = n.Replace("Left", "Right");
-            else if (n.Contains("Right")) swapped = n.Replace("Right", "Left");
-            else return t;
-
-            // Lazy-build lookup around the spheres hierarchy.
-            if (_spheresByName == null)
-            {
-                _spheresByName = new System.Collections.Generic.Dictionary<string, Transform>(System.StringComparer.Ordinal);
-                _sphereLookupRoot = t.parent != null ? t.parent : t.root;
-                foreach (var tr in _sphereLookupRoot.GetComponentsInChildren<Transform>(true))
-                {
-                    if (tr == null) continue;
-                    if (!_spheresByName.ContainsKey(tr.name))
-                        _spheresByName.Add(tr.name, tr);
-                }
-            }
-
-            if (_spheresByName.TryGetValue(swapped, out var other) && other != null)
-                return other;
-            return t;
-        }
-
         // 1) Root follow (position only is safest)
         if (followRootPosition && rootBone && rootSphere)
-        {
-            var rs = MaybeSwapSphere(rootSphere);
-            var p = MirrorPos(rs.position);
-            if (Finite(p))
-                rootBone.position = p;
-            else if (!_loggedNonFiniteOnce)
-            {
-                _loggedNonFiniteOnce = true;
-                Debug.LogError("[SpheresToBones_FKDriver] rootSphere position is non-finite (NaN/Inf). Skipping root follow to prevent SMPL exploding.", this);
-            }
-        }
+            rootBone.position = rootSphere.position;
 
         if (followRootRotation && rootBone && rootSphere)
             rootBone.rotation = rootSphere.rotation;
@@ -152,26 +47,11 @@ public class SpheresToBones_FKDriver : MonoBehaviour
             if (!s.bone || !s.boneChild || !s.sphere || !s.sphereChild) continue;
 
             Vector3 boneDir = (s.boneChild.position - s.bone.position);
-            var sA = MaybeSwapSphere(s.sphere);
-            var sB = MaybeSwapSphere(s.sphereChild);
-            Vector3 sphereDir = (sB.position - sA.position);
-            sphereDir = MirrorDir(sphereDir);
-
-            if (!Finite(boneDir) || !Finite(sphereDir))
-            {
-                if (!_loggedNonFiniteOnce)
-                {
-                    _loggedNonFiniteOnce = true;
-                    Debug.LogError("[SpheresToBones_FKDriver] Non-finite bone/sphere direction detected (NaN/Inf). Skipping this frame to prevent SMPL exploding.", this);
-                }
-                continue;
-            }
+            Vector3 sphereDir = (s.sphereChild.position - s.sphere.position);
 
             if (boneDir.sqrMagnitude < 1e-10f || sphereDir.sqrMagnitude < 1e-10f) continue;
 
             // rotation that turns current bone direction into desired sphere direction
-            // Note: only s.bone is written; boneChild follows by hierarchy. Wrists may stay near bind
-            // unless you add a segment whose .bone is that joint.
             Quaternion delta = Quaternion.FromToRotation(boneDir.normalized, sphereDir.normalized);
             Quaternion targetRot = delta * s.bone.rotation;
 
@@ -181,17 +61,7 @@ public class SpheresToBones_FKDriver : MonoBehaviour
 
             // Only if you REALLY want positional snapping (usually keep false)
             if (s.applyPositionToBone)
-            {
-                var sp = MaybeSwapSphere(s.sphere);
-                var bp = MirrorPos(sp.position);
-                if (Finite(bp))
-                    s.bone.position = bp;
-                else if (!_loggedNonFiniteOnce)
-                {
-                    _loggedNonFiniteOnce = true;
-                    Debug.LogError("[SpheresToBones_FKDriver] sphere position is non-finite (NaN/Inf). Skipping bone position snap.", this);
-                }
-            }
+                s.bone.position = s.sphere.position;
         }
     }
 }

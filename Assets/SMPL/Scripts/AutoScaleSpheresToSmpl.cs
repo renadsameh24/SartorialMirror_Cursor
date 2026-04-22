@@ -2,8 +2,6 @@ using UnityEngine;
 
 public class AutoScaleSpheresToSmpl : MonoBehaviour
 {
-    static bool Finite(Vector3 v) => float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
-    static bool Finite(float v) => float.IsFinite(v);
     [Header("Scale THIS (parent of all spheres)")]
     public Transform jointSpheresRoot;   // JointDebug/JointSpheresRoot
 
@@ -21,8 +19,6 @@ public class AutoScaleSpheresToSmpl : MonoBehaviour
     public bool applyOnStart = true;
     public bool keepUpdating = false; // set true only if scales change at runtime
     public float extraScale = 1f;     // tweak if you want spheres slightly smaller/bigger
-
-    private Vector3 _baselineScale = Vector3.zero;
 
     void Start()
     {
@@ -44,13 +40,6 @@ public class AutoScaleSpheresToSmpl : MonoBehaviour
             return;
         }
 
-        if (!Finite(smplHeadBone.position) || !Finite(smplLeftAnkleBone.position) || !Finite(smplRightAnkleBone.position) ||
-            !Finite(sphereHead.position) || !Finite(sphereLeftAnkle.position) || !Finite(sphereRightAnkle.position))
-        {
-            Debug.LogError("[AutoScaleSpheresToSmpl] Non-finite (NaN/Inf) positions detected; skipping scale to prevent NaN propagation.", this);
-            return;
-        }
-
         // WORLD space heights
         float smplHeight = Vector3.Distance(
             smplHeadBone.position,
@@ -62,28 +51,16 @@ public class AutoScaleSpheresToSmpl : MonoBehaviour
             Midpoint(sphereLeftAnkle.position, sphereRightAnkle.position)
         );
 
-        if (!Finite(smplHeight) || !Finite(spheresHeight) || spheresHeight < 1e-6f || smplHeight < 1e-6f)
+        if (spheresHeight < 1e-6f || smplHeight < 1e-6f)
         {
             Debug.LogWarning("[AutoScaleSpheresToSmpl] Height too small; check assignments.");
             return;
         }
 
         float ratio = (smplHeight / spheresHeight) * extraScale;
-        if (!Finite(ratio) || ratio <= 0f)
-        {
-            Debug.LogError($"[AutoScaleSpheresToSmpl] Invalid ratio={ratio}; skipping scale.", this);
-            return;
-        }
 
-        // IMPORTANT: avoid multiplying repeatedly each frame (explodes to Inf/NaN and triggers GUIUtility IsFinite assertions).
-        if (_baselineScale == Vector3.zero) _baselineScale = jointSpheresRoot.localScale;
-        jointSpheresRoot.localScale = _baselineScale * ratio;
-        if (!Finite(jointSpheresRoot.localScale))
-        {
-            Debug.LogError("[AutoScaleSpheresToSmpl] Resulting localScale is non-finite; reverting and skipping.", this);
-            jointSpheresRoot.localScale = Vector3.one;
-            return;
-        }
+        // IMPORTANT: set localScale directly (don’t multiply repeatedly each frame)
+        jointSpheresRoot.localScale = jointSpheresRoot.localScale * ratio;
 
         Debug.Log($"[AutoScaleSpheresToSmpl] smplHeight={smplHeight:F3}, spheresHeight={spheresHeight:F3}, ratio={ratio:F3}, newScale={jointSpheresRoot.localScale}");
     }

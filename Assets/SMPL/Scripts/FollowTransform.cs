@@ -9,25 +9,14 @@ public class FollowTransform : MonoBehaviour
     public Vector3 positionOffset;
     public Vector3 rotationOffsetEuler;
 
-    static bool Finite(Vector3 v) => float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
-    static bool Finite(Quaternion q) => float.IsFinite(q.x) && float.IsFinite(q.y) && float.IsFinite(q.z) && float.IsFinite(q.w);
-
     void LateUpdate()
     {
         if (!source) return;
 
         if (followPosition)
-        {
-            var p = source.position + positionOffset;
-            if (Finite(p))
-                transform.position = p;
-        }
+            transform.position = source.position + positionOffset;
 
         if (followRotation)
-        {
-            var r = source.rotation * Quaternion.Euler(rotationOffsetEuler);
-            if (Finite(r))
-                transform.rotation = r;
-        }
+            transform.rotation = source.rotation * Quaternion.Euler(rotationOffsetEuler);
     }
 }
