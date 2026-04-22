@@ -9,16 +9,14 @@ public static class GarmentMaterialTint
     {
         if (garmentRoot == null) return;
 
-        // Use sharedMaterials to avoid instantiating per-renderer materials at runtime.
-        // This means colorways affect the shared material reference for this instance only
-        // as long as Unity has duplicated materials on import; if not, you can switch to
-        // renderer.materials at the cost of allocations.
+        // In Edit Mode, touching Renderer.material(s) instantiates/leaks materials into the scene.
+        // In Play Mode, we want per-instance materials so tinting doesn't affect other instances.
         var renderers = garmentRoot.GetComponentsInChildren<Renderer>(true);
         foreach (var r in renderers)
         {
             if (!r) continue;
 
-            var mats = r.materials; // instance materials (safe per garment instance)
+            var mats = Application.isPlaying ? r.materials : r.sharedMaterials;
             for (int i = 0; i < mats.Length; i++)
             {
                 var m = mats[i];
