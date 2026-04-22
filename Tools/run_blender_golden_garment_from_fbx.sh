@@ -3,7 +3,12 @@
 #
 # Usage:
 #   cd /path/to/SartorialMirror_Cursor
-#   ./Tools/run_blender_golden_garment_from_fbx.sh /absolute/path/to/YourShirt.fbx
+#   ./Tools/run_blender_golden_garment_from_fbx.sh /Users/you/Downloads/my_shirt.fbx
+#
+# (Do not copy the words "absolute/path" from the README — use your real FBX path.)
+#
+# Output goes into THIS repo by default: Assets/garments_prepared/Flannel_SMPL_Skinned.fbx
+# — that folder is inside your Unity project when you open SartorialMirror_Cursor in Unity.
 #
 # Or set GARMENT_FBX yourself and omit the argument (defaults shown below).
 #
@@ -22,7 +27,17 @@ export EXPORT_FBX="${EXPORT_FBX:-$REPO/Assets/garments_prepared/Flannel_SMPL_Ski
 # First CLI argument wins over a stale GARMENT_FBX in the environment.
 if [[ $# -ge 1 ]]; then
   G1="$1"
-  export GARMENT_FBX="$(cd "$(dirname "$G1")" && pwd)/$(basename "$G1")"
+  if [[ ! -f "$G1" ]]; then
+    echo "Not a file (check the path — README examples are not real files): $G1" >&2
+    echo "Example:  $0 \"\$HOME/Desktop/MyShirt.fbx\"" >&2
+    echo "Or:       GARMENT_FBX=\"\$HOME/Desktop/MyShirt.fbx\" $0" >&2
+    exit 1
+  fi
+  if command -v realpath &>/dev/null; then
+    export GARMENT_FBX="$(realpath "$G1")"
+  else
+    export GARMENT_FBX="$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$G1")"
+  fi
 else
   export GARMENT_FBX="${GARMENT_FBX:-}"
 fi
@@ -32,8 +47,9 @@ if [[ ! -f "$SMPL_FBX" ]]; then
   exit 1
 fi
 if [[ -z "$GARMENT_FBX" ]] || [[ ! -f "$GARMENT_FBX" ]]; then
-  echo "Usage: $0 /absolute/path/to/garment.fbx" >&2
+  echo "Usage: $0 /path/to/your/real/garment.fbx" >&2
   echo "Or:    GARMENT_FBX=/path/to/shirt.fbx $0   (no argument)" >&2
+  echo "Default export (Unity asset path in this repo): $EXPORT_FBX" >&2
   exit 1
 fi
 
