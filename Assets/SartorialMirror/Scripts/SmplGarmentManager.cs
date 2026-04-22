@@ -110,9 +110,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
     public string[] garmentPelvisBoneNames = { "J00", "pelvis", "Hips", "hips", "Pelvis" };
 
     [Header("Deformation Strategy")]
-    [Tooltip("If OFF (default): point each SkinnedMeshRenderer bone at the scene SMPL bones by name — same skeleton MediaPipe/FK already drives (recommended; works with Recalculate Bind Poses). " +
-             "If ON: duplicate garment armature + copy transforms each frame — OK for tuning, but turn OFF if you still see stretch after fixes.")]
-    public bool driveGarmentArmatureFromSmpl = false;
+    [Tooltip("If OFF: point each SkinnedMeshRenderer bone at the scene SMPL bones by name. If ON: duplicate garment armature + copy transforms each frame.")]
+    public bool driveGarmentArmatureFromSmpl = true;
 
     [Tooltip("After remap, rebuild Mesh.bindposes from SMPL bones at spawn. " +
              "OFF by default: remap-only usually follows pose (Blender export uses the same SMPL rig). " +
@@ -144,7 +143,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     [Header("Stretch Guard")]
     [Tooltip("If true, clamp each driven garment bone so it cannot move farther from its SMPL bone than at spawn time. Can fight rotation drive; leave off while tuning.")]
-    public bool clampBoneStretch = false;
+    public bool clampBoneStretch = true;
 
     [Tooltip("Extra slack allowed beyond the initial bone offset (meters).")]
     public float clampSlackMeters = 0.02f;
@@ -157,7 +156,22 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     [Header("Twist Fix (Drive mode)")]
     [Tooltip("Only affects Drive Garment Armature From SMPL mode. Applies an extra roll (typically 180°) around the forearm/wrist axis to counter bone-roll mismatches that cause 180° twists.")]
-    public bool applyArmTwistFix = false;
+    public bool applyArmTwistFix = true;
+
+    public enum TwistAxisMode
+    {
+        SmplBoneToChild,
+        SmplForward,
+        SmplUp,
+        SmplRight,
+        GarmentBoneToChild,
+        GarmentForward,
+        GarmentUp,
+        GarmentRight,
+    }
+
+    [Tooltip("Axis used for twist rotation. If 180° seems to twist 'vertically', try SmplForward/Up/Right until it behaves like roll.")]
+    public TwistAxisMode twistAxisMode = TwistAxisMode.SmplBoneToChild;
 
     [Tooltip("Forearm roll correction (degrees). Typical values: 180 or -180.")]
     [Range(-180f, 180f)]
@@ -175,18 +189,18 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     [Tooltip("If true, each frame uses a pre-sampled quaternion offset between garment and SMPL bone (see RecordBindPoseRotationOffsets). " +
              "If arms still look wrong, leave this off and use simple world copy + end-of-frame drive.")]
-    public bool useBindPoseRotationOffset = false;
+    public bool useBindPoseRotationOffset = true;
 
     [Tooltip("If true, copy bone rotations in a WaitForEndOfFrame coroutine so SpheresToBones_FKDriver + Animator finish first. " +
              "Off by default: if the coroutine fails to start, the garment would not move. Turn on only when debugging arm spikes.")]
-    public bool applyGarmentDriveAtEndOfFrame = false;
+    public bool applyGarmentDriveAtEndOfFrame = true;
 
     [Header("Presets (quality of life)")]
     [Tooltip("Pick a preset, then click Apply Preset (context menu) or enable applyPresetOnEnable for Play Mode iteration.")]
-    public TuningPreset tuningPreset = TuningPreset.RemapOnly;
+    public TuningPreset tuningPreset = TuningPreset.Drive_MaxStability_TwistFix_Clamp;
 
     [Tooltip("If true, applies the selected preset in OnEnable (useful since bootstrap adds components at runtime).")]
-    public bool applyPresetOnEnable = false;
+    public bool applyPresetOnEnable = true;
 
     [Header("Catalog")]
     public GarmentCatalog catalog;
@@ -1127,7 +1141,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 var j = ResolveSmplKey(g != null ? g.name : "");
                 if (!string.IsNullOrEmpty(j) && TryGetTwistFixDegreesForKey(j, out var deg))
                 {
-                    Vector3 axis = GetSmplBoneAxisForTwist(j);
+                    Vector3 axis = GetAxisForTwist(j, garmentBone: g, smplBone: s);
                     if (axis.sqrMagnitude > 1e-8f)
                         rot = Quaternion.AngleAxis(deg, axis) * rot;
                 }
@@ -1189,13 +1203,11 @@ public sealed class SmplGarmentManager : MonoBehaviour
         return false;
     }
 
-    Vector3 GetSmplBoneAxisForTwist(string j)
+    Vector3 GetAxisForTwist(string j, Transform garmentBone, Transform smplBone)
     {
-        // Use the bone-to-child direction as twist axis if available (best). Fall back to bone.forward.
-        if (smplBonesByName == null) EnsureBoneMapExcludingGarments();
-        if (smplBonesByName == null) return Vector3.forward;
-
-        if (!smplBonesByName.TryGetValue(j, out var b) || b == null) return Vector3.forward;
+        // Use SMPL bone transform as default axis source.
+        if (smplBonesByName == null || smplBonesByName.Count == 0)
+            EnsureBoneMapExcludingGarments();
 
         string childKey = j switch
         {
@@ -1206,11 +1218,46 @@ public sealed class SmplGarmentManager : MonoBehaviour
             _ => null
         };
 
-        if (!string.IsNullOrEmpty(childKey) && smplBonesByName.TryGetValue(childKey, out var c) && c != null)
-            return (c.position - b.position).normalized;
+        Vector3 AxisBoneToChild(Transform b, string child)
+        {
+            if (b == null) return Vector3.zero;
+            if (!string.IsNullOrEmpty(child) && smplBonesByName != null && smplBonesByName.TryGetValue(child, out var c) && c != null)
+                return (c.position - b.position).normalized;
+            if (b.childCount > 0)
+                return (b.GetChild(0).position - b.position).normalized;
+            return Vector3.zero;
+        }
 
-        // Fallback: use bone's local forward in world.
-        return b.forward.normalized;
+        switch (twistAxisMode)
+        {
+            case TwistAxisMode.SmplBoneToChild:
+            {
+                var a = AxisBoneToChild(smplBone, childKey);
+                if (a.sqrMagnitude > 1e-8f) return a;
+                return smplBone != null ? smplBone.forward.normalized : Vector3.forward;
+            }
+            case TwistAxisMode.SmplForward:
+                return smplBone != null ? smplBone.forward.normalized : Vector3.forward;
+            case TwistAxisMode.SmplUp:
+                return smplBone != null ? smplBone.up.normalized : Vector3.up;
+            case TwistAxisMode.SmplRight:
+                return smplBone != null ? smplBone.right.normalized : Vector3.right;
+
+            case TwistAxisMode.GarmentBoneToChild:
+            {
+                if (garmentBone == null) return Vector3.forward;
+                if (garmentBone.childCount > 0) return (garmentBone.GetChild(0).position - garmentBone.position).normalized;
+                return garmentBone.forward.normalized;
+            }
+            case TwistAxisMode.GarmentForward:
+                return garmentBone != null ? garmentBone.forward.normalized : Vector3.forward;
+            case TwistAxisMode.GarmentUp:
+                return garmentBone != null ? garmentBone.up.normalized : Vector3.up;
+            case TwistAxisMode.GarmentRight:
+                return garmentBone != null ? garmentBone.right.normalized : Vector3.right;
+        }
+
+        return Vector3.forward;
     }
 
     static int BoneDepthFromSubtreeRoot(Transform bone, Transform subtreeRoot)
