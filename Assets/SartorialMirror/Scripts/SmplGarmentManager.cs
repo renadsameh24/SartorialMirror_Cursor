@@ -1000,8 +1000,19 @@ public sealed class SmplGarmentManager : MonoBehaviour
             // Fall back to ratio-only scaling.
             applied = ratio;
         }
-        var pre = garmentRoot.transform.localScale;
-        garmentRoot.transform.localScale = pre * applied;
+        // In Remap mode, bones point at external SMPL bones. Scaling the garment root does NOT reliably scale the
+        // skinned result (since the bones are not under the garment). In that case, scale the mesh vertices instead.
+        bool scaleMeshesInsteadOfRoot = !driveGarmentArmatureFromSmpl;
+        if (scaleMeshesInsteadOfRoot)
+        {
+            ScaleGarmentMeshesVertices(garmentRoot, applied);
+            garmentRoot.transform.localScale = Vector3.one;
+        }
+        else
+        {
+            var pre = garmentRoot.transform.localScale;
+            garmentRoot.transform.localScale = pre * applied;
+        }
 
         float postMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
         if (postMag > 1e-6f)
@@ -1012,7 +1023,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 float pass2 = smplMag / postMag;
                 if (float.IsFinite(pass2) && pass2 > 0.001f && pass2 < 2000f)
                 {
-                    garmentRoot.transform.localScale *= pass2;
+                    if (scaleMeshesInsteadOfRoot)
+                        ScaleGarmentMeshesVertices(garmentRoot, pass2);
+                    else
+                        garmentRoot.transform.localScale *= pass2;
                     applied *= pass2;
                     postMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
                 }
@@ -1025,6 +1039,33 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 $"importedWorldMag: smpl={smplMag:F3} garment={garmentMag:F3} postGarment={postMag:F3} | " +
                 $"skinnedBoundsMag: smpl={smplSkinnedMag:F3} garment={garmentSkinnedMag:F3}.",
                 garmentRoot);
+    }
+
+    void ScaleGarmentMeshesVertices(GameObject garmentRoot, float uniformScale)
+    {
+        if (garmentRoot == null) return;
+        if (!float.IsFinite(uniformScale) || uniformScale <= 0f) return;
+
+        var smrs = garmentRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        foreach (var smr in smrs)
+        {
+            if (!smr || smr.sharedMesh == null) continue;
+            var src = smr.sharedMesh;
+
+            // Clone once per renderer to avoid mutating imported assets.
+            var mesh = Instantiate(src);
+            mesh.name = src.name + "_scaledRuntime";
+            runtimeGarmentMeshCopies.Add(mesh);
+
+            var verts = mesh.vertices;
+            for (int i = 0; i < verts.Length; i++)
+                verts[i] *= uniformScale;
+            mesh.vertices = verts;
+
+            // Bounds are in mesh local space; scaling verts requires bounds refresh.
+            mesh.RecalculateBounds();
+            smr.sharedMesh = mesh;
+        }
     }
 
     static bool LooksLikeSmplSkinnedGarment(GameObject garmentRoot)
