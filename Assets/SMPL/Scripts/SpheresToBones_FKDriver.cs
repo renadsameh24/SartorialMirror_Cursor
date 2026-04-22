@@ -8,6 +8,10 @@ using UnityEngine;
 [DefaultExecutionOrder(2500)]
 public class SpheresToBones_FKDriver : MonoBehaviour
 {
+    static bool Finite(Vector3 v) => float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
+
+    private bool _loggedNonFiniteOnce = false;
+
     [Serializable]
     public class Segment
     {
@@ -63,7 +67,16 @@ public class SpheresToBones_FKDriver : MonoBehaviour
 
         // 1) Root follow (position only is safest)
         if (followRootPosition && rootBone && rootSphere)
-            rootBone.position = MirrorPos(rootSphere.position);
+        {
+            var p = MirrorPos(rootSphere.position);
+            if (Finite(p))
+                rootBone.position = p;
+            else if (!_loggedNonFiniteOnce)
+            {
+                _loggedNonFiniteOnce = true;
+                Debug.LogError("[SpheresToBones_FKDriver] rootSphere position is non-finite (NaN/Inf). Skipping root follow to prevent SMPL exploding.", this);
+            }
+        }
 
         if (followRootRotation && rootBone && rootSphere)
             rootBone.rotation = rootSphere.rotation;
@@ -79,6 +92,16 @@ public class SpheresToBones_FKDriver : MonoBehaviour
             Vector3 sphereDir = (s.sphereChild.position - s.sphere.position);
             sphereDir = MirrorDir(sphereDir);
 
+            if (!Finite(boneDir) || !Finite(sphereDir))
+            {
+                if (!_loggedNonFiniteOnce)
+                {
+                    _loggedNonFiniteOnce = true;
+                    Debug.LogError("[SpheresToBones_FKDriver] Non-finite bone/sphere direction detected (NaN/Inf). Skipping this frame to prevent SMPL exploding.", this);
+                }
+                continue;
+            }
+
             if (boneDir.sqrMagnitude < 1e-10f || sphereDir.sqrMagnitude < 1e-10f) continue;
 
             // rotation that turns current bone direction into desired sphere direction
@@ -93,7 +116,16 @@ public class SpheresToBones_FKDriver : MonoBehaviour
 
             // Only if you REALLY want positional snapping (usually keep false)
             if (s.applyPositionToBone)
-                s.bone.position = MirrorPos(s.sphere.position);
+            {
+                var bp = MirrorPos(s.sphere.position);
+                if (Finite(bp))
+                    s.bone.position = bp;
+                else if (!_loggedNonFiniteOnce)
+                {
+                    _loggedNonFiniteOnce = true;
+                    Debug.LogError("[SpheresToBones_FKDriver] sphere position is non-finite (NaN/Inf). Skipping bone position snap.", this);
+                }
+            }
         }
     }
 }
