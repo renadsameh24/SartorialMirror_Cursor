@@ -33,6 +33,7 @@ Optional env:
   MAX_WRIST_WEIGHT=0.25                # cap wrist weight on sleeve verts; excess moves to elbow/shoulder
   SLEEVES_ARM_ONLY=1                   # if 1, sleeves keep only arm-chain bones (no spine/neck bleed)
   PRESERVE_GARMENT_REST=1              # keep garment transform exactly; temporarily move BODY for transfer instead
+  KEEP_ORIGINAL_RIG=0                  # if 1, skip weight transfer and export garment as-is (preserves rest/bindposes). Use Unity Drive mode to follow SMPL.
 """
 
 from __future__ import annotations
@@ -80,6 +81,7 @@ REGION_REWEIGHT = os.environ.get("REGION_REWEIGHT", "1").strip() in ("1", "true"
 MAX_WRIST_WEIGHT = float(os.environ.get("MAX_WRIST_WEIGHT", "0.25").strip() or "0.25")
 SLEEVES_ARM_ONLY = os.environ.get("SLEEVES_ARM_ONLY", "1").strip() in ("1", "true", "yes", "on")
 PRESERVE_GARMENT_REST = os.environ.get("PRESERVE_GARMENT_REST", "1").strip() in ("1", "true", "yes", "on")
+KEEP_ORIGINAL_RIG = os.environ.get("KEEP_ORIGINAL_RIG", "0").strip() in ("1", "true", "yes", "on")
 
 
 def objs_by_type(t: str):
@@ -820,6 +822,13 @@ def run() -> int:
     ensure_active(garment)
     garment.parent = arm
     garment.matrix_parent_inverse = arm.matrix_world.inverted()
+
+    if KEEP_ORIGINAL_RIG:
+        log("KEEP_ORIGINAL_RIG=1: skipping weight transfer; exporting garment with original bindposes/weights.")
+        ensure_armature_modifier(garment, arm)
+        export_fbx(arm, [garment])
+        log("Done.")
+        return 0
 
     strip_armature_modifiers(garment)
     clear_vertex_groups(garment)
