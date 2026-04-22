@@ -849,20 +849,53 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
                 if (fk != null && fk.rootBone != null)
                 {
-                    var smr0 = ActiveGarmentInstance.GetComponentInChildren<SkinnedMeshRenderer>(true);
-                    if (smr0 != null && smr0.bones != null)
+                    // Remap mode: smr.bones should point directly at FK-driven J00 transform.
+                    // Drive mode: smr.bones are garment bones, so compare via the drive map instead.
+                    if (!driveGarmentArmatureFromSmpl)
                     {
-                        foreach (var b in smr0.bones)
+                        var smr0 = ActiveGarmentInstance.GetComponentInChildren<SkinnedMeshRenderer>(true);
+                        if (smr0 != null && smr0.bones != null)
                         {
-                            if (b == null) continue;
-                            if (!string.Equals(ResolveSmplKey(b.name), "J00", StringComparison.OrdinalIgnoreCase))
-                                continue;
-                            if (b != fk.rootBone)
-                                Debug.LogError(
-                                    "[5/5] Shirt J00 after remap ≠ FK rootBone. This usually means TWO SMPL armatures exist; " +
-                                    "set Smpl Armature Root Override to the driven armature (parent of J00) and ensure the FK driver references bones under that same armature.",
-                                    smr0);
-                            break;
+                            foreach (var b in smr0.bones)
+                            {
+                                if (b == null) continue;
+                                if (!string.Equals(ResolveSmplKey(b.name), "J00", StringComparison.OrdinalIgnoreCase))
+                                    continue;
+                                if (b != fk.rootBone)
+                                    Debug.LogError(
+                                        "[5/5] Shirt J00 after remap ≠ FK rootBone. This usually means TWO SMPL armatures exist; " +
+                                        "set Smpl Armature Root Override to the driven armature (parent of J00) and ensure the FK driver references bones under that same armature.",
+                                        smr0);
+                                break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (garmentToSmplBoneMap == null || garmentToSmplBoneMap.Count == 0)
+                        {
+                            Debug.LogWarning("[5/5] Drive mode: garment→SMPL bone map is empty; garment will not follow.", this);
+                        }
+                        else
+                        {
+                            bool found = false;
+                            foreach (var kv in garmentToSmplBoneMap)
+                            {
+                                var g = kv.Key;
+                                var s = kv.Value;
+                                if (g == null || s == null) continue;
+                                if (!string.Equals(ResolveSmplKey(g.name), "J00", StringComparison.OrdinalIgnoreCase))
+                                    continue;
+                                found = true;
+                                if (s != fk.rootBone)
+                                    Debug.LogError(
+                                        "[5/5] Drive mode: garment J00 is NOT mapped to FK rootBone (wrong SMPL target armature). " +
+                                        "This indicates multiple SMPL rigs exist; ensure smplRoot points at the driven rig.",
+                                        this);
+                                break;
+                            }
+                            if (!found)
+                                Debug.LogWarning("[5/5] Drive mode: no garment J00 bone was mapped; check garment bone names.", this);
                         }
                     }
                 }
