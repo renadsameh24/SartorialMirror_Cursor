@@ -831,13 +831,17 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         static Vector3 AbsVec(Vector3 v) => new Vector3(Mathf.Abs(v.x), Mathf.Abs(v.y), Mathf.Abs(v.z));
 
-        static float MeshBoundsMagnitude(SkinnedMeshRenderer smr)
+        static float MeshWorldBoundsMagnitudeFromImported(SkinnedMeshRenderer smr)
         {
             if (smr == null) return 0f;
             var m = smr.sharedMesh;
             if (m == null) return 0f;
-            // Compare imported mesh bounds-to-bounds (stable, avoids skinned NaN bounds).
-            float mag = m.bounds.size.magnitude;
+            // Use imported mesh bounds (stable) and scale by lossyScale (world-ish) so this works
+            // when the SMPL rig is scaled down/up in the scene.
+            var localSize = m.bounds.size;
+            var s = AbsVec(smr.transform.lossyScale);
+            var worldSize = Vector3.Scale(localSize, s);
+            float mag = worldSize.magnitude;
             return float.IsFinite(mag) ? mag : 0f;
         }
 
@@ -854,8 +858,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
         var garmentSmr = garmentRoot.GetComponentInChildren<SkinnedMeshRenderer>(true);
         if (smplSmr == null || garmentSmr == null) return;
 
-        float smplMag = MeshBoundsMagnitude(smplSmr);
-        float garmentMag = MeshBoundsMagnitude(garmentSmr);
+        float smplMag = MeshWorldBoundsMagnitudeFromImported(smplSmr);
+        float garmentMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
         if (smplMag <= 1e-6f || garmentMag <= 1e-6f) return;
 
         float ratio = smplMag / garmentMag;
