@@ -154,6 +154,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("Only when Drive Garment Armature From SMPL is ON. Matches world position+rotation per bone. Ignored in remap mode.")]
     public bool matchDrivenBonesToSmplWorld = true;
 
+    [Tooltip("Only when Drive Garment Armature From SMPL is ON and Match Driven Bones To SMPL World is ON. " +
+             "If OFF (default), we copy world rotations only and keep garment bone positions (preserves original rest shape; avoids stretching).")]
+    public bool driveWorldPositionInDriveMode = false;
+
     [Header("Twist Fix (Drive mode)")]
     [Tooltip("Only affects Drive Garment Armature From SMPL mode. Applies an extra roll (typically 180°) around the forearm/wrist axis to counter bone-roll mismatches that cause 180° twists.")]
     public bool applyArmTwistFix = true;
@@ -308,8 +312,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 recalculateBindPosesAfterRemap = false;
                 applyArmTwistFix = false;
                 useBindPoseRotationOffset = true;
-                applyGarmentDriveAtEndOfFrame = true;
+                applyGarmentDriveAtEndOfFrame = false;
                 matchDrivenBonesToSmplWorld = true;
+                driveWorldPositionInDriveMode = false;
                 drivePositions = false;
                 clampBoneStretch = false;
                 break;
@@ -321,8 +326,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 forearmTwistFixDegrees = 180f;
                 wristTwistFixDegrees = -180f;
                 useBindPoseRotationOffset = true;
-                applyGarmentDriveAtEndOfFrame = true;
+                applyGarmentDriveAtEndOfFrame = false;
                 matchDrivenBonesToSmplWorld = true;
+                driveWorldPositionInDriveMode = false;
                 drivePositions = false;
                 clampBoneStretch = false;
                 break;
@@ -334,8 +340,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 forearmTwistFixDegrees = 180f;
                 wristTwistFixDegrees = -180f;
                 useBindPoseRotationOffset = true;
-                applyGarmentDriveAtEndOfFrame = true;
+                applyGarmentDriveAtEndOfFrame = false;
                 matchDrivenBonesToSmplWorld = true;
+                driveWorldPositionInDriveMode = false;
                 drivePositions = false;
                 clampBoneStretch = true;
                 clampSlackMeters = Mathf.Clamp(clampSlackMeters, 0.005f, 0.03f);
@@ -1278,7 +1285,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
             if (matchDrivenBonesToSmplWorld)
             {
-                g.SetPositionAndRotation(s.position, rot);
+                if (driveWorldPositionInDriveMode)
+                    g.SetPositionAndRotation(s.position, rot);
+                else
+                    g.rotation = rot;
             }
             else
             {
@@ -1292,6 +1302,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
             if (clampBoneStretch && garmentBoneMaxDistance.TryGetValue(g, out var maxD))
             {
+                if (!driveWorldPositionInDriveMode && !drivePositions)
+                    continue;
                 var offset = g.position - s.position;
                 float len = offset.magnitude;
                 if (len > maxD && len > 1e-6f)
