@@ -31,6 +31,7 @@ Optional env:
   ALLOW_BONES=J00,J03,J06,J09,J12,J16,J17,J18,J19,J20,J21  # upper-body only; prevents leg weights on shirts
   REGION_REWEIGHT=1                    # post-process weights: torso vs sleeves by nearest key bones
   MAX_WRIST_WEIGHT=0.25                # cap wrist weight on sleeve verts; excess moves to elbow/shoulder
+  SLEEVES_ARM_ONLY=1                   # if 1, sleeves keep only arm-chain bones (no spine/neck bleed)
 """
 
 from __future__ import annotations
@@ -76,6 +77,7 @@ ALLOW_BONES = tuple(
 )
 REGION_REWEIGHT = os.environ.get("REGION_REWEIGHT", "1").strip() in ("1", "true", "yes", "on")
 MAX_WRIST_WEIGHT = float(os.environ.get("MAX_WRIST_WEIGHT", "0.25").strip() or "0.25")
+SLEEVES_ARM_ONLY = os.environ.get("SLEEVES_ARM_ONLY", "1").strip() in ("1", "true", "yes", "on")
 
 
 def objs_by_type(t: str):
@@ -618,8 +620,12 @@ def _bone_world_pos(arm: bpy.types.Object, bone_name: str) -> Vector | None:
 def _region_sets():
     # Minimal sets for shirts (torso + 3-bone arm chains). Add shoulders/spine as stabilizers.
     torso = {"J00", "J03", "J06", "J09", "J12"}
-    left = {"J16", "J18", "J20"} | {"J12", "J09"}  # include neck/spine for smooth shoulder transition
-    right = {"J17", "J19", "J21"} | {"J12", "J09"}
+    left = {"J16", "J18", "J20"}
+    right = {"J17", "J19", "J21"}
+    if not SLEEVES_ARM_ONLY:
+        # Optionally allow a little torso bleed for softer shoulder transitions.
+        left |= {"J12", "J09"}
+        right |= {"J12", "J09"}
     return torso, left, right
 
 

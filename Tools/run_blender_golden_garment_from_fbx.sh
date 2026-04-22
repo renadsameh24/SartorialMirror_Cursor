@@ -62,5 +62,6 @@ export AUTO_ALIGN="${AUTO_ALIGN:-1}"
 export ALLOW_BONES="${ALLOW_BONES:-J00,J03,J06,J09,J12,J16,J17,J18,J19,J20,J21}"
 export REGION_REWEIGHT="${REGION_REWEIGHT:-1}"
 export MAX_WRIST_WEIGHT="${MAX_WRIST_WEIGHT:-0.25}"
+export SLEEVES_ARM_ONLY="${SLEEVES_ARM_ONLY:-1}"
 
 exec "$BLENDER" --background --python "$REPO/Tools/blender_golden_garment_from_fbx.py"
