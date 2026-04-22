@@ -29,6 +29,8 @@ Optional env:
   DISALLOW_BONES=J15,J22,J23           # comma-separated vertex-group names to zero out after transfer (default: head + hands)
   AUTO_ALIGN=1                         # translate garment to body bbox center before weight transfer (recommended)
   ALLOW_BONES=J00,J03,J06,J09,J12,J16,J17,J18,J19,J20,J21  # upper-body only; prevents leg weights on shirts
+  REGION_REWEIGHT=1                    # post-process weights: torso vs sleeves by nearest key bones
+  MAX_WRIST_WEIGHT=0.25                # cap wrist weight on sleeve verts; excess moves to elbow/shoulder
 """
 
 from __future__ import annotations
@@ -72,6 +74,8 @@ ALLOW_BONES = tuple(
     ).split(",")
     if s.strip()
 )
+REGION_REWEIGHT = os.environ.get("REGION_REWEIGHT", "1").strip() in ("1", "true", "yes", "on")
+MAX_WRIST_WEIGHT = float(os.environ.get("MAX_WRIST_WEIGHT", "0.25").strip() or "0.25")
 
 
 def objs_by_type(t: str):
@@ -604,6 +608,122 @@ def allowlist_vertex_groups(garment: bpy.types.Object, fallback_group: str = "J0
             removed += 1
     log(f"ALLOW_BONES applied; removed {removed} non-allowed groups; kept={sorted(list(allowed))}")
 
+def _bone_world_pos(arm: bpy.types.Object, bone_name: str) -> Vector | None:
+    pb = arm.pose.bones.get(bone_name) if arm and arm.pose else None
+    if pb is None:
+        return None
+    return arm.matrix_world @ pb.head
+
+
+def _region_sets():
+    # Minimal sets for shirts (torso + 3-bone arm chains). Add shoulders/spine as stabilizers.
+    torso = {"J00", "J03", "J06", "J09", "J12"}
+    left = {"J16", "J18", "J20"} | {"J12", "J09"}  # include neck/spine for smooth shoulder transition
+    right = {"J17", "J19", "J21"} | {"J12", "J09"}
+    return torso, left, right
+
+
+def region_reweight_shirt(garment: bpy.types.Object, arm: bpy.types.Object) -> None:
+    """
+    Heuristic post-pass:
+    - classify each vertex by nearest key bone (torso vs left sleeve vs right sleeve)
+    - keep only that region's bones
+    - cap wrist weights and push excess up-chain
+    This prevents the \"whole shirt follows wrists\" failure mode.
+    """
+    if not REGION_REWEIGHT:
+        return
+
+    mesh = garment.data
+    if mesh is None or len(mesh.vertices) == 0:
+        return
+
+    torso_set, left_set, right_set = _region_sets()
+
+    # Cache key bone positions (world).
+    keys = {
+        "torso": ["J09", "J12", "J03"],
+        "left": ["J16", "J18", "J20"],
+        "right": ["J17", "J19", "J21"],
+    }
+    key_pos: dict[str, list[Vector]] = {"torso": [], "left": [], "right": []}
+    for k, names in keys.items():
+        for n in names:
+            p = _bone_world_pos(arm, n)
+            if p is not None:
+                key_pos[k].append(p)
+
+    if not key_pos["torso"]:
+        log("REGION_REWEIGHT skipped: could not resolve torso key bones in armature.")
+        return
+
+    name_to_idx = {g.name: g.index for g in garment.vertex_groups}
+
+    def group_name_from_index(i: int) -> str:
+        return garment.vertex_groups[i].name
+
+    def nearest_region(p: Vector) -> str:
+        # If arm keys missing, default to torso.
+        best = ("torso", 1e30)
+        for region in ("torso", "left", "right"):
+            pts = key_pos.get(region) or []
+            if not pts:
+                continue
+            d = min((p - q).length_squared for q in pts)
+            if d < best[1]:
+                best = (region, d)
+        return best[0]
+
+    mw = garment.matrix_world
+    max_wrist = max(0.0, min(1.0, MAX_WRIST_WEIGHT))
+
+    for v in mesh.vertices:
+        p = mw @ v.co
+        region = nearest_region(p)
+        allowed = torso_set if region == "torso" else left_set if region == "left" else right_set
+
+        # Read current weights for allowed groups only.
+        kept: dict[str, float] = {}
+        for ge in v.groups:
+            gn = group_name_from_index(ge.group)
+            if gn in allowed and ge.weight > 1e-12:
+                kept[gn] = kept.get(gn, 0.0) + float(ge.weight)
+
+        if not kept:
+            # fallback: spine2
+            kept["J09"] = 1.0
+
+        # Cap wrist on sleeve verts.
+        if region == "left":
+            w = kept.get("J20", 0.0)
+            if w > max_wrist:
+                excess = w - max_wrist
+                kept["J20"] = max_wrist
+                kept["J18"] = kept.get("J18", 0.0) + excess * 0.7
+                kept["J16"] = kept.get("J16", 0.0) + excess * 0.3
+        elif region == "right":
+            w = kept.get("J21", 0.0)
+            if w > max_wrist:
+                excess = w - max_wrist
+                kept["J21"] = max_wrist
+                kept["J19"] = kept.get("J19", 0.0) + excess * 0.7
+                kept["J17"] = kept.get("J17", 0.0) + excess * 0.3
+
+        # Normalize and write back (REPLACE).
+        s = sum(kept.values())
+        if s < 1e-12:
+            kept = {"J09": 1.0}
+            s = 1.0
+
+        inv = 1.0 / s
+        for gn, val in kept.items():
+            if gn not in name_to_idx:
+                garment.vertex_groups.new(name=gn)
+                name_to_idx = {g.name: g.index for g in garment.vertex_groups}
+            garment.vertex_groups[name_to_idx[gn]].add([v.index], val * inv, "REPLACE")
+
+    log(f"REGION_REWEIGHT applied (MAX_WRIST_WEIGHT={max_wrist}).")
+
 
 def delete_extra_armatures(keep: bpy.types.Object) -> None:
     for o in list(objs_by_type("ARMATURE")):
@@ -701,6 +821,7 @@ def run() -> int:
     remove_orphan_vertex_groups_not_on_armature(garment, arm)
     disallow_vertex_groups_and_renormalize(garment, fallback_group="J09")
     allowlist_vertex_groups(garment, fallback_group="J09")
+    region_reweight_shirt(garment, arm)
     normalize_weights(garment)
     smooth_vertex_weights_light(garment, iterations=1)
     normalize_weights(garment)

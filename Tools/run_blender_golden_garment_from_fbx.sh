@@ -60,5 +60,7 @@ export DISALLOW_BONES="${DISALLOW_BONES:-J15,J22,J23}"
 export AUTO_ALIGN="${AUTO_ALIGN:-1}"
 # Upper-body only for shirts: torso + arms (prevents leg weights).
 export ALLOW_BONES="${ALLOW_BONES:-J00,J03,J06,J09,J12,J16,J17,J18,J19,J20,J21}"
+export REGION_REWEIGHT="${REGION_REWEIGHT:-1}"
+export MAX_WRIST_WEIGHT="${MAX_WRIST_WEIGHT:-0.25}"
 
 exec "$BLENDER" --background --python "$REPO/Tools/blender_golden_garment_from_fbx.py"
