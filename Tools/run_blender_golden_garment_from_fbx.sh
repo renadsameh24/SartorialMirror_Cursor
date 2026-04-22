@@ -56,5 +56,6 @@ echo "Blender: $BLENDER"
 # Weight copy after DT: FORCE_KD=1 runs surface transfer (default WEIGHT_COPY_METHOD=BVH for sleeves).
 export FORCE_KD="${FORCE_KD:-1}"
 export WEIGHT_COPY_METHOD="${WEIGHT_COPY_METHOD:-BVH}"
+export DISALLOW_BONES="${DISALLOW_BONES:-J15,J22,J23}"
 
 exec "$BLENDER" --background --python "$REPO/Tools/blender_golden_garment_from_fbx.py"

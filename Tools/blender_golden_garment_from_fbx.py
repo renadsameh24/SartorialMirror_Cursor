@@ -502,7 +502,16 @@ def disallow_vertex_groups_and_renormalize(garment: bpy.types.Object, fallback_g
         for gi, w in kept:
             garment.vertex_groups[gi].add([v.index], w * inv, "REPLACE")
 
-    log(f"Zeroed disallowed groups and renormalized: {DISALLOW_BONES}")
+    # Finally: remove the disallowed groups entirely so Unity cannot ever pick them up.
+    # (Some importers can keep stale weights even if they are near-zero.)
+    removed = 0
+    for n in DISALLOW_BONES:
+        vg = garment.vertex_groups.get(n)
+        if vg is not None:
+            garment.vertex_groups.remove(vg)
+            removed += 1
+
+    log(f"Disallowed groups removed ({removed}) and weights renormalized: {DISALLOW_BONES}")
 
 
 def delete_extra_armatures(keep: bpy.types.Object) -> None:
