@@ -109,6 +109,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
              "Use this when the imported garment FBX is the correct shape but comes in at the wrong unit scale (\"huge shirt\" / tiny shirt).")]
     public bool autoScaleGarmentToSmplBounds = true;
 
+    [Tooltip("Optional extra multiplier applied after auto-scale. Use this to lock in a consistent unit conversion " +
+             "when your garment FBX units differ from SMPL (e.g. 0.01 or 0.004).")]
+    public float autoScaleMultiplier = 1f;
+
     [Tooltip("If true, keep snapping every frame. Can fight armature driving if alignment is already correct; try off first.")]
     public bool continuousPelvisSnap = false;
 
@@ -919,9 +923,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         float ratio = smplMag / garmentMag;
         if (!float.IsFinite(ratio) || ratio <= 0f) return;
-        // Avoid truly pathological scaling; however, shirts often come in 10x-100x off due to FBX unit mismatches.
+        // Avoid truly pathological scaling; however, shirts often come in 10x-1000x off due to FBX unit mismatches.
         // If we skip scaling in those cases, the garment will look "huge" and bounds/skin can glitch.
-        if (ratio < 0.005f || ratio > 200f)
+        if (ratio < 0.001f || ratio > 2000f)
         {
             if (logSpawnFailures)
                 Debug.LogWarning(
@@ -931,10 +935,12 @@ public sealed class SmplGarmentManager : MonoBehaviour
             return;
         }
 
-        garmentRoot.transform.localScale *= ratio;
+        float mult = float.IsFinite(autoScaleMultiplier) ? autoScaleMultiplier : 1f;
+        if (mult <= 0f) mult = 1f;
+        garmentRoot.transform.localScale *= (ratio * mult);
         if (logMissingBoneNames)
             Debug.Log(
-                $"[SmplGarmentManager] Auto-scaled garment by {ratio:F4} to match SMPL size ({smplSource}). smplMag={smplMag:F3} garmentMag={garmentMag:F3}.",
+                $"[SmplGarmentManager] Auto-scaled garment by {(ratio * mult):F4} (ratio={ratio:F4} * mult={mult:F4}) to match SMPL size ({smplSource}). smplMag={smplMag:F3} garmentMag={garmentMag:F3}.",
                 garmentRoot);
     }
 
