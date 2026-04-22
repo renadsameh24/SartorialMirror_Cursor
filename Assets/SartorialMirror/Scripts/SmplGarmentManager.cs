@@ -735,6 +735,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         if (!useArmatureDrive)
             RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
+        // Always disable garment Animators: in Drive mode they fight our per-frame bone writes and cause visible jitter/glitch.
+        // In Remap mode they can also rebind/overwrite bones.
+        DisableGarmentAnimators(ActiveGarmentInstance);
 
         pendingBindPoseSample = useArmatureDrive && useBindPoseRotationOffset && garmentToSmplBoneMap != null;
 
@@ -745,6 +748,22 @@ public sealed class SmplGarmentManager : MonoBehaviour
         ApplyActiveColorVariant();
         LogPipelineDiagnosisAfterSpawn();
         return true;
+    }
+
+    static void DisableGarmentAnimators(GameObject garmentRoot)
+    {
+        if (garmentRoot == null) return;
+
+        foreach (var anim in garmentRoot.GetComponentsInChildren<Animator>(true))
+        {
+            if (anim) anim.enabled = false;
+        }
+
+        // Some FBXs use legacy Animation instead of Animator.
+        foreach (var anim in garmentRoot.GetComponentsInChildren<Animation>(true))
+        {
+            if (anim) anim.enabled = false;
+        }
     }
 
     /// <summary>
