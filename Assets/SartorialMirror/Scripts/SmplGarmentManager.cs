@@ -146,6 +146,16 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("Only when Drive Garment Armature From SMPL is ON. Matches world position+rotation per bone. Ignored in remap mode.")]
     public bool matchDrivenBonesToSmplWorld = true;
 
+    [Header("Twist Fix (Drive mode)")]
+    [Tooltip("Only affects Drive Garment Armature From SMPL mode. Applies an extra roll (typically 180°) around the forearm/wrist axis to counter bone-roll mismatches that cause 180° twists.")]
+    public bool applyArmTwistFix = false;
+
+    [Range(-180f, 180f)]
+    public float armTwistFixDegrees = 180f;
+
+    [Tooltip("Which SMPL keys to apply the twist fix to. Defaults cover forearms + wrists.")]
+    public string[] armTwistFixKeys = { "J18", "J19", "J20", "J21" };
+
     [Tooltip("If true, each frame uses a pre-sampled quaternion offset between garment and SMPL bone (see RecordBindPoseRotationOffsets). " +
              "If arms still look wrong, leave this off and use simple world copy + end-of-frame drive.")]
     public bool useBindPoseRotationOffset = false;
@@ -1004,6 +1014,17 @@ public sealed class SmplGarmentManager : MonoBehaviour
             else
                 rot = s.rotation;
 
+            if (applyArmTwistFix && armTwistFixKeys != null && armTwistFixKeys.Length > 0)
+            {
+                var j = ResolveSmplKey(g != null ? g.name : "");
+                if (!string.IsNullOrEmpty(j) && ShouldApplyTwistFixToKey(j))
+                {
+                    Vector3 axis = GetSmplBoneAxisForTwist(j);
+                    if (axis.sqrMagnitude > 1e-8f)
+                        rot = Quaternion.AngleAxis(armTwistFixDegrees, axis) * rot;
+                }
+            }
+
             if (matchDrivenBonesToSmplWorld)
             {
                 g.SetPositionAndRotation(s.position, rot);
@@ -1026,6 +1047,40 @@ public sealed class SmplGarmentManager : MonoBehaviour
                     g.position = s.position + offset * (maxD / len);
             }
         }
+    }
+
+    bool ShouldApplyTwistFixToKey(string j)
+    {
+        for (int i = 0; i < armTwistFixKeys.Length; i++)
+        {
+            if (string.Equals(armTwistFixKeys[i], j, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    Vector3 GetSmplBoneAxisForTwist(string j)
+    {
+        // Use the bone-to-child direction as twist axis if available (best). Fall back to bone.forward.
+        if (smplBonesByName == null) EnsureBoneMapExcludingGarments();
+        if (smplBonesByName == null) return Vector3.forward;
+
+        if (!smplBonesByName.TryGetValue(j, out var b) || b == null) return Vector3.forward;
+
+        string childKey = j switch
+        {
+            "J18" => "J20",
+            "J19" => "J21",
+            "J20" => "J22",
+            "J21" => "J23",
+            _ => null
+        };
+
+        if (!string.IsNullOrEmpty(childKey) && smplBonesByName.TryGetValue(childKey, out var c) && c != null)
+            return (c.position - b.position).normalized;
+
+        // Fallback: use bone's local forward in world.
+        return b.forward.normalized;
     }
 
     static int BoneDepthFromSubtreeRoot(Transform bone, Transform subtreeRoot)
