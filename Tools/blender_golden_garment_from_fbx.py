@@ -11,6 +11,14 @@ Pipeline (revised):
   6) Normalize, limit to 4 influences per vert (Unity), optional smooth.
   7) Export FBX with deform bones + mesh.
 
+Scale-only (already SMPL-skinned FBX from Unity — no weight re-transfer):
+  export SCALE_MATCH_ONLY=1
+  export GARMENT_FBX="/abs/path/Flannel_SMPL_Skinned.fbx"   # armature + shirt (body mesh optional)
+  export EXPORT_FBX="/abs/path/out/Flannel_SMPL_Skinned.fbx"
+  Blender --background --python Tools/blender_golden_garment_from_fbx.py
+  Or: ./Tools/run_blender_scale_match_to_unity.sh
+  SMPL_FBX is ignored. If the FBX has no body mesh, scale uses SMPL bone distances vs shirt bbox. Reimport in Unity.
+
 Usage (from repo root):
   export SMPL_FBX="/abs/path/SMPL_neutral_rig_GOLDEN.fbx"
   export GARMENT_FBX="/abs/path/Shirt.fbx"
@@ -37,6 +45,8 @@ Optional env:
   SLEEVES_ARM_ONLY=1                   # if 1, sleeves keep only arm-chain bones (no spine/neck bleed)
   PRESERVE_GARMENT_REST=1              # keep garment transform exactly; temporarily move BODY for transfer instead
   KEEP_ORIGINAL_RIG=0                  # if 1, skip weight transfer and export garment as-is (preserves rest/bindposes). Use Unity Drive mode to follow SMPL.
+  SCALE_MATCH_ONLY=0                  # if 1, single FBX in GARMENT_FBX: auto-scale garment to SMPL body, export (weights unchanged).
+  ALLOW_EXTREME_ARMATURE_SCALE=0      # if 1, allow armature-only scale factors outside [0.2, 5] (shirt-only FBX, no body mesh)
 """
 
 from __future__ import annotations
@@ -91,6 +101,13 @@ MAX_WRIST_WEIGHT = float(os.environ.get("MAX_WRIST_WEIGHT", "0.25").strip() or "
 SLEEVES_ARM_ONLY = os.environ.get("SLEEVES_ARM_ONLY", "1").strip() in ("1", "true", "yes", "on")
 PRESERVE_GARMENT_REST = os.environ.get("PRESERVE_GARMENT_REST", "1").strip() in ("1", "true", "yes", "on")
 KEEP_ORIGINAL_RIG = os.environ.get("KEEP_ORIGINAL_RIG", "0").strip() in ("1", "true", "yes", "on")
+SCALE_MATCH_ONLY = os.environ.get("SCALE_MATCH_ONLY", "0").strip() in ("1", "true", "yes", "on")
+ALLOW_EXTREME_ARMATURE_SCALE = os.environ.get("ALLOW_EXTREME_ARMATURE_SCALE", "0").strip() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 
 def objs_by_type(t: str):
@@ -354,6 +371,79 @@ def auto_scale_garment_to_body(
         f"AUTO_SCALE=1 mode={mode!r}: scaled garment by {s:.6f} "
         f"(candidates={{{', '.join(f'{k}={v:.4f}' for k, v in sorted(cands.items()))}}})."
     )
+
+
+def _scale_candidates_armature_only(arm: bpy.types.Object, garment: bpy.types.Object) -> dict[str, float]:
+    """When the FBX has no SMPL body mesh (shirt-only export), compare armature rest distances to garment bbox."""
+    bpy.context.view_layer.depsgraph.update()
+    gsz = world_bbox_size(garment)
+    out: dict[str, float] = {}
+    g_diag = float(gsz.length)
+    g_max = max(abs(gsz.x), abs(gsz.y), abs(gsz.z))
+    g_hz = math.sqrt(max(0.0, gsz.x) ** 2 + max(0.0, gsz.z) ** 2)
+    torso = bone_pair_world_dist(arm, "J00", "J12") or bone_pair_world_dist(arm, "J00", "J15")
+    shoulder = bone_pair_world_dist(arm, "J16", "J17")
+    if torso is not None and g_max > 1e-12:
+        out["torso_vs_garment_max"] = torso / g_max
+    if shoulder is not None and g_hz > 1e-12:
+        out["shoulder_vs_garment_xz"] = shoulder / g_hz
+    if torso is not None and g_diag > 1e-12:
+        out["torso_vs_garment_diag"] = torso / g_diag
+    return out
+
+
+def auto_scale_garment_using_armature_only(garment: bpy.types.Object, arm: bpy.types.Object) -> bool:
+    """Scale shirt mesh using SMPL bone distances vs garment bbox (prepared FBX without body mesh). Returns True if scale was applied."""
+    if not AUTO_SCALE or garment is None or arm is None:
+        return False
+    cands = _scale_candidates_armature_only(arm, garment)
+    mode = (AUTO_SCALE_MODE or "combined").strip().lower()
+    s: float | None = None
+    if mode == "bbox":
+        s = cands.get("torso_vs_garment_diag") or cands.get("torso_vs_garment_max")
+    elif mode == "max_axis":
+        s = cands.get("torso_vs_garment_max")
+    elif mode == "torso":
+        s = cands.get("torso_vs_garment_max")
+    elif mode == "shoulder":
+        s = cands.get("shoulder_vs_garment_xz")
+    elif mode == "combined":
+        vals = sorted(float(v) for v in cands.values() if math.isfinite(v) and v > 0.0)
+        if len(vals) >= 2:
+            s = float(statistics.median(vals))
+        elif len(vals) == 1:
+            s = vals[0]
+    else:
+        log(f"AUTO_SCALE_MODE={mode!r} unknown (armature-only); using combined.")
+        vals = sorted(float(v) for v in cands.values() if math.isfinite(v) and v > 0.0)
+        s = float(statistics.median(vals)) if vals else None
+    if s is None or not math.isfinite(s) or s <= 0.0:
+        s = cands.get("torso_vs_garment_max") or cands.get("torso_vs_garment_diag")
+    if s is None or not math.isfinite(s) or s <= 0.0:
+        log("AUTO_SCALE armature-only: could not compute scale factor; skipping.")
+        return False
+    # Shirt-only FBXs that already match Unity/SMPL often still have a huge mesh AABB vs bone line length;
+    # applying a tiny factor here can destroy the asset. Skip extreme factors unless explicitly allowed.
+    if not ALLOW_EXTREME_ARMATURE_SCALE and (s < 0.2 or s > 5.0):
+        log(
+            f"AUTO_SCALE armature-only: median scale {s:.4f} is outside [0.2, 5.0] — skipping "
+            f"(garment may already be correct for Unity). Re-scale in Unity, or import SMPL+shirt with a body mesh, "
+            f"or set ALLOW_EXTREME_ARMATURE_SCALE=1 to apply anyway."
+        )
+        return False
+    s0 = s
+    s = _clamp_scale(s)
+    if abs(s - s0) > 1e-6:
+        log(f"AUTO_SCALE armature-only: raw {s0:.6f} clamped to [{AUTO_SCALE_S_MIN:g}, {AUTO_SCALE_S_MAX:g}] → {s:.6f}")
+    ensure_active(garment)
+    garment.scale = garment.scale * s
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    bpy.context.view_layer.depsgraph.update()
+    log(
+        f"AUTO_SCALE armature-only mode={mode!r}: scaled garment by {s:.6f} "
+        f"(candidates={{{', '.join(f'{k}={v:.4f}' for k, v in sorted(cands.items()))}}})."
+    )
+    return True
 
 
 def auto_align_garment_to_body(garment: bpy.types.Object, body: bpy.types.Object) -> None:
@@ -957,8 +1047,46 @@ def export_fbx(arm_obj: bpy.types.Object, mesh_objs: list[bpy.types.Object]) -> 
 
 
 def run() -> int:
-    if not SMPL_FBX or not GARMENT_FBX or not EXPORT_FBX:
-        log("Set SMPL_FBX, GARMENT_FBX, EXPORT_FBX (absolute paths).")
+    if not EXPORT_FBX:
+        log("Set EXPORT_FBX (absolute path).")
+        return 1
+
+    if SCALE_MATCH_ONLY:
+        if not GARMENT_FBX:
+            log(
+                "SCALE_MATCH_ONLY=1: set GARMENT_FBX to your SMPL-skinned shirt FBX "
+                "(e.g. Assets/garments_prepared/Flannel_SMPL_Skinned.fbx — may contain armature + shirt only, no body mesh)."
+            )
+            return 1
+        clear_scene()
+        log(f"[scale_only] Import: {GARMENT_FBX}")
+        import_fbx(GARMENT_FBX)
+        arm = pick_armature()
+        if not arm:
+            log("[scale_only] No armature found.")
+            return 1
+        garment = pick_garment_mesh(None)
+        if garment is None:
+            log("[scale_only] No mesh found.")
+            return 1
+        body = pick_body_mesh()
+        if body is not None and body == garment:
+            body = None
+        if body is not None:
+            log(f"[scale_only] Armature: {arm.name} | body={body.name} | garment={garment.name}")
+            auto_scale_garment_to_body(garment, body, arm)
+        else:
+            log(f"[scale_only] Armature: {arm.name} | garment={garment.name} (no body mesh — armature-only scale)")
+            if not auto_scale_garment_using_armature_only(garment, arm):
+                log("[scale_only] No safe scale applied; leaving EXPORT_FBX unchanged (exiting before export).")
+                return 0
+        ensure_armature_modifier(garment, arm)
+        export_fbx(arm, [garment])
+        log("[scale_only] Done — weights unchanged; reimport FBX in Unity.")
+        return 0
+
+    if not SMPL_FBX or not GARMENT_FBX:
+        log("Set SMPL_FBX, GARMENT_FBX, EXPORT_FBX (absolute paths), or use SCALE_MATCH_ONLY=1 with GARMENT_FBX + EXPORT_FBX.")
         return 1
 
     clear_scene()
