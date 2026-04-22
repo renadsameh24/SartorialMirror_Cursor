@@ -3,6 +3,10 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
 /// <summary>Which transform defines mesh space when rebuilding inverse bind matrices after bone remap.</summary>
 public enum GarmentBindPoseReference
 {
@@ -702,6 +706,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
             return false;
         }
 
+        LogCatalogPrefabSource(entry, index);
+
         ClearActive();
 
         ActiveGarmentInstance = Instantiate(entry.garmentPrefab, garmentsParent);
@@ -749,6 +755,28 @@ public sealed class SmplGarmentManager : MonoBehaviour
         LogPipelineDiagnosisAfterSpawn();
         return true;
     }
+
+#if UNITY_EDITOR
+    void LogCatalogPrefabSource(GarmentCatalog.GarmentEntry entry, int index)
+    {
+        if (entry == null || entry.garmentPrefab == null) return;
+
+        try
+        {
+            string prefabPath = AssetDatabase.GetAssetPath(entry.garmentPrefab);
+            string guid = string.IsNullOrEmpty(prefabPath) ? "" : AssetDatabase.AssetPathToGUID(prefabPath);
+            Debug.Log(
+                $"[SmplGarmentManager] Spawning catalog[{index}] '{entry.displayName}': prefab='{entry.garmentPrefab.name}', path='{prefabPath}', guid='{guid}'",
+                this);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[SmplGarmentManager] Could not resolve prefab asset source: {ex.Message}", this);
+        }
+    }
+#else
+    void LogCatalogPrefabSource(GarmentCatalog.GarmentEntry entry, int index) { }
+#endif
 
     static void DisableGarmentAnimators(GameObject garmentRoot)
     {
