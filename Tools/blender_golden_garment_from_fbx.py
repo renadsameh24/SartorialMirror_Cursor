@@ -27,6 +27,8 @@ Optional env:
   FORCE_KD=1                           # always run weight copy (BVH or VERTEX)
   WEIGHT_COPY_METHOD=BVH               # BVH = nearest triangle on body surface (better sleeves); VERTEX = nearest body vertex
   DISALLOW_BONES=J15,J22,J23           # comma-separated vertex-group names to zero out after transfer (default: head + hands)
+  AUTO_ALIGN=1                         # translate garment to body bbox center before weight transfer (recommended)
+  ALLOW_BONES=J00,J03,J06,J09,J12,J16,J17,J18,J19,J20,J21  # upper-body only; prevents leg weights on shirts
 """
 
 from __future__ import annotations
@@ -57,6 +59,18 @@ FORCE_KD = os.environ.get("FORCE_KD", "0").strip() in ("1", "true", "yes", "on")
 WEIGHT_COPY_METHOD = os.environ.get("WEIGHT_COPY_METHOD", "BVH").strip().upper()
 DISALLOW_BONES = tuple(
     s.strip() for s in (os.environ.get("DISALLOW_BONES", "J15,J22,J23") or "").split(",") if s.strip()
+)
+AUTO_ALIGN = os.environ.get("AUTO_ALIGN", "1").strip() in ("1", "true", "yes", "on")
+ALLOW_BONES = tuple(
+    s.strip()
+    for s in (
+        os.environ.get(
+            "ALLOW_BONES",
+            "J00,J03,J06,J09,J12,J16,J17,J18,J19,J20,J21",
+        )
+        or ""
+    ).split(",")
+    if s.strip()
 )
 
 
@@ -171,6 +185,30 @@ def ensure_vertex_groups_for_armature_and_body(
             existing.add(name)
 
     log(f"Pre-created vertex groups on garment: {len(garment.vertex_groups)} (body+armature names)")
+
+
+def world_bbox_center(obj: bpy.types.Object) -> Vector:
+    """World-space center of the object bound_box."""
+    mw = obj.matrix_world
+    pts = [mw @ Vector(corner) for corner in obj.bound_box]
+    c = Vector((0.0, 0.0, 0.0))
+    for p in pts:
+        c += p
+    return c * (1.0 / max(1, len(pts)))
+
+
+def auto_align_garment_to_body(garment: bpy.types.Object, body: bpy.types.Object) -> None:
+    """Translate garment so its bbox center matches the body's bbox center (world space)."""
+    if not AUTO_ALIGN:
+        return
+    try:
+        gc = world_bbox_center(garment)
+        bc = world_bbox_center(body)
+        delta = bc - gc
+        garment.location = garment.location + delta
+        log(f"AUTO_ALIGN=1: moved garment by {tuple(round(x, 4) for x in delta)}")
+    except Exception as e:
+        log(f"AUTO_ALIGN failed: {e}")
 
 
 def strip_armature_modifiers(obj: bpy.types.Object) -> None:
@@ -514,6 +552,59 @@ def disallow_vertex_groups_and_renormalize(garment: bpy.types.Object, fallback_g
     log(f"Disallowed groups removed ({removed}) and weights renormalized: {DISALLOW_BONES}")
 
 
+def allowlist_vertex_groups(garment: bpy.types.Object, fallback_group: str = "J09") -> None:
+    """
+    Keep weights only on ALLOW_BONES (if provided). Removes all other vertex groups.
+    This is useful for shirts so they can't ever pick up leg weights.
+    """
+    if not ALLOW_BONES:
+        return
+
+    mesh = garment.data
+    if mesh is None or len(mesh.vertices) == 0:
+        return
+
+    allowed = set(ALLOW_BONES)
+    name_to_idx: dict[str, int] = {g.name: g.index for g in garment.vertex_groups}
+    fb_idx = name_to_idx.get(fallback_group)
+    if fb_idx is None and fallback_group in allowed:
+        vg = garment.vertex_groups.new(name=fallback_group)
+        fb_idx = vg.index
+        name_to_idx[fallback_group] = fb_idx
+
+    # For each vertex: keep only allowed weights, renormalize, fallback if empty.
+    for v in mesh.vertices:
+        kept: list[tuple[int, float]] = []
+        for ge in v.groups:
+            gn = garment.vertex_groups[ge.group].name
+            if gn not in allowed:
+                continue
+            if ge.weight > 1e-12:
+                kept.append((ge.group, float(ge.weight)))
+
+        if not kept:
+            if fb_idx is not None:
+                garment.vertex_groups[fb_idx].add([v.index], 1.0, "REPLACE")
+            continue
+
+        s = sum(w for _gi, w in kept)
+        if s < 1e-12:
+            if fb_idx is not None:
+                garment.vertex_groups[fb_idx].add([v.index], 1.0, "REPLACE")
+            continue
+        inv = 1.0 / s
+        for gi, w in kept:
+            garment.vertex_groups[gi].add([v.index], w * inv, "REPLACE")
+
+    # Remove non-allowed groups entirely.
+    removed = 0
+    for g in list(garment.vertex_groups):
+        if g.name not in allowed:
+            garment.vertex_groups.remove(g)
+            removed += 1
+    log(f"ALLOW_BONES applied; removed {removed} non-allowed groups; kept={sorted(list(allowed))}")
+
+
 def delete_extra_armatures(keep: bpy.types.Object) -> None:
     for o in list(objs_by_type("ARMATURE")):
         if o != keep:
@@ -586,6 +677,7 @@ def run() -> int:
     strip_armature_modifiers(garment)
     clear_vertex_groups(garment)
     ensure_vertex_groups_for_armature_and_body(garment, arm, body)
+    auto_align_garment_to_body(garment, body)
 
     dt = add_data_transfer(garment, body, DT_VERT_MAPPING)
     bpy.context.view_layer.depsgraph.update()
@@ -608,6 +700,7 @@ def run() -> int:
 
     remove_orphan_vertex_groups_not_on_armature(garment, arm)
     disallow_vertex_groups_and_renormalize(garment, fallback_group="J09")
+    allowlist_vertex_groups(garment, fallback_group="J09")
     normalize_weights(garment)
     smooth_vertex_weights_light(garment, iterations=1)
     normalize_weights(garment)
