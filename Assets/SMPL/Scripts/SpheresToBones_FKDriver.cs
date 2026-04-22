@@ -16,6 +16,9 @@ public class SpheresToBones_FKDriver : MonoBehaviour
 
         [Header("Options")]
         public bool applyPositionToBone = false; // keep false for most bones
+
+        [Tooltip("If > 0, multiply effective rotation lerp for this segment only (e.g. 0.5 = half as snappy). 0 = use global / torso defaults.")]
+        [Range(0f, 2f)] public float rotLerpScale = 0f;
     }
 
     [Header("Root follow (optional but recommended)")]
@@ -24,17 +27,44 @@ public class SpheresToBones_FKDriver : MonoBehaviour
     public bool followRootPosition = true;
     public bool followRootRotation = false; // usually false unless you have pelvis rotation data
 
+    [Tooltip("1 = pelvis snaps to sphere each frame; lower = softer pelvis follow (reduces lower-torso jitter).")]
+    [Range(0f, 1f)] public float rootPositionLerp = 1f;
+
     [Header("Segments (order doesn’t matter, but must be correct pairs)")]
     public Segment[] segments;
 
-    [Header("Smoothing")]
+    [Header("Smoothing (arms / default)")]
     [Range(0f, 1f)] public float rotLerp = 1f; // 1 = exact, 0.3 = smoother
+
+    [Header("Torso / chest restraint")]
+    [Tooltip("When on, segments whose parent bone name matches Torso Name Tokens use Torso Rot Lerp instead of Rot Lerp (arms stay at full Rot Lerp).")]
+    public bool autoRestrainTorsoByBoneName = true;
+
+    [Tooltip("Slerp factor for torso/chest segments only. Lower = more restrained trunk vs spheres.")]
+    [Range(0f, 1f)] public float torsoRotLerp = 0.4f;
+
+    [Tooltip("If > 0, cap how many degrees the torso bone can rotate toward the sphere target in one LateUpdate (0 = no cap).")]
+    [Range(0f, 180f)] public float torsoMaxDegreesPerFrame = 18f;
+
+    [Tooltip("Case-insensitive substrings on segment bone.name (e.g. SMPL J00 pelvis, J03/J06/J09 spine, J12 neck).")]
+    public string[] torsoNameTokens =
+    {
+        "pelvis", "Pelvis", "J00", "hips", "Hips",
+        "spine", "Spine", "J03", "J06", "J09",
+        "chest", "Chest", "J12", "neck", "Neck"
+    };
 
     void LateUpdate()
     {
         // 1) Root follow (position only is safest)
         if (followRootPosition && rootBone && rootSphere)
-            rootBone.position = rootSphere.position;
+        {
+            var target = rootSphere.position;
+            if (rootPositionLerp >= 0.999f)
+                rootBone.position = target;
+            else
+                rootBone.position = Vector3.Lerp(rootBone.position, target, rootPositionLerp);
+        }
 
         if (followRootRotation && rootBone && rootSphere)
             rootBone.rotation = rootSphere.rotation;
@@ -55,13 +85,54 @@ public class SpheresToBones_FKDriver : MonoBehaviour
             Quaternion delta = Quaternion.FromToRotation(boneDir.normalized, sphereDir.normalized);
             Quaternion targetRot = delta * s.bone.rotation;
 
-            s.bone.rotation = (rotLerp >= 0.999f)
-                ? targetRot
-                : Quaternion.Slerp(s.bone.rotation, targetRot, rotLerp);
+            float t = EffectiveRotLerp(s);
+            if (t >= 0.999f)
+                t = 1f;
+
+            Quaternion next = t >= 1f ? targetRot : Quaternion.Slerp(s.bone.rotation, targetRot, t);
+
+            if (IsTorsoSegment(s) && torsoMaxDegreesPerFrame > 0.1f)
+                next = ClampRotationStep(s.bone.rotation, next, torsoMaxDegreesPerFrame);
+
+            s.bone.rotation = next;
 
             // Only if you REALLY want positional snapping (usually keep false)
             if (s.applyPositionToBone)
                 s.bone.position = s.sphere.position;
         }
+    }
+
+    bool IsTorsoSegment(Segment s)
+    {
+        if (!autoRestrainTorsoByBoneName || s.bone == null) return false;
+        return BoneNameMatchesTorsoTokens(s.bone.name);
+    }
+
+    bool BoneNameMatchesTorsoTokens(string boneName)
+    {
+        if (string.IsNullOrEmpty(boneName) || torsoNameTokens == null) return false;
+        foreach (var raw in torsoNameTokens)
+        {
+            if (string.IsNullOrEmpty(raw)) continue;
+            if (boneName.IndexOf(raw, StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+        }
+        return false;
+    }
+
+    float EffectiveRotLerp(Segment s)
+    {
+        float baseLerp = IsTorsoSegment(s) ? torsoRotLerp : rotLerp;
+        if (s.rotLerpScale > 0f)
+            baseLerp *= Mathf.Clamp01(s.rotLerpScale);
+        return Mathf.Clamp01(baseLerp);
+    }
+
+    static Quaternion ClampRotationStep(Quaternion from, Quaternion to, float maxDegrees)
+    {
+        float ang = Quaternion.Angle(from, to);
+        if (ang <= maxDegrees + 1e-4f) return to;
+        float t = maxDegrees / Mathf.Max(1e-4f, ang);
+        return Quaternion.Slerp(from, to, t);
     }
 }
