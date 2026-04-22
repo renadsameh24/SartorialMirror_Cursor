@@ -227,6 +227,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private Transform garmentsParent;
     private Dictionary<string, Transform> smplBonesByName;
     private Transform cachedSmplPelvis;
+    private Transform resolvedSmplArmatureRoot;
     private Dictionary<Transform, Transform> garmentToSmplBoneMap;
     private Transform garmentArmatureRoot;
     private readonly Dictionary<Transform, float> garmentBoneMaxDistance = new();
@@ -446,6 +447,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         var armatureRoot = FindSmplDrivenArmatureRoot();
         if (armatureRoot != null)
         {
+            resolvedSmplArmatureRoot = armatureRoot;
             foreach (var t in armatureRoot.GetComponentsInChildren<Transform>(true))
                 AddBoneNameEntry(t);
 
@@ -461,6 +463,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
             return;
         }
 
+        resolvedSmplArmatureRoot = null;
         if (logSpawnFailures)
             Debug.LogWarning(
                 $"[SmplGarmentManager] Armature '{smplArmatureRootName}' not found under '{smplRoot.name}'. " +
@@ -496,8 +499,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
             }
         }
 
-        // Prefer the subtree that SpheresToBones_FKDriver actually drives (avoids picking a duplicate static armature).
-        var fk = smplRoot.GetComponentInChildren<SpheresToBones_FKDriver>(true);
+        // Prefer the subtree that the *correct* SpheresToBones_FKDriver drives (avoids picking a duplicate static armature).
+        // If the user provided an override, prefer a FK driver whose rootBone is under that override.
+        var fk = FindSpheresToBonesFkInScene(smplArmatureRootOverride != null ? smplArmatureRootOverride : smplRoot);
         if (fk != null)
         {
             var anchor = fk.rootBone;
@@ -744,7 +748,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         else
             Debug.Log($"[2/5] SMPL bone map: OK ({smplBonesByName.Count} keys)", this);
 
-        var fk = FindSpheresToBonesFkInScene();
+        var fk = FindSpheresToBonesFkInScene(resolvedSmplArmatureRoot != null ? resolvedSmplArmatureRoot : smplArmatureRootOverride != null ? smplArmatureRootOverride : smplRoot);
         if (fk == null)
         {
             Debug.LogError(
@@ -804,7 +808,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
                                 continue;
                             if (b != fk.rootBone)
                                 Debug.LogError(
-                                    "[5/5] Shirt J00 after remap ≠ FK rootBone (wrong armature in bone map). Set Smpl Armature Root Override to the driven armature parent of J00.",
+                                    "[5/5] Shirt J00 after remap ≠ FK rootBone. This usually means TWO SMPL armatures exist; " +
+                                    "set Smpl Armature Root Override to the driven armature (parent of J00) and ensure the FK driver references bones under that same armature.",
                                     smr0);
                             break;
                         }
@@ -820,8 +825,26 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     static SpheresToBones_FKDriver FindSpheresToBonesFkInScene()
     {
+        return FindSpheresToBonesFkInScene(null);
+    }
+
+    static SpheresToBones_FKDriver FindSpheresToBonesFkInScene(Transform preferRoot)
+    {
         var all = UnityEngine.Object.FindObjectsOfType<SpheresToBones_FKDriver>(true);
-        return all != null && all.Length > 0 ? all[0] : null;
+        if (all == null || all.Length == 0) return null;
+
+        if (preferRoot != null)
+        {
+            for (int i = 0; i < all.Length; i++)
+            {
+                var fk = all[i];
+                if (fk == null || fk.rootBone == null) continue;
+                if (fk.rootBone == preferRoot || fk.rootBone.IsChildOf(preferRoot))
+                    return fk;
+            }
+        }
+
+        return all[0];
     }
 
     static int CountValidFkSegments(SpheresToBones_FKDriver fk)
@@ -1428,7 +1451,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     void ValidateRemappedPelvisMatchesFkDriver(SkinnedMeshRenderer smr)
     {
         if (smr == null || smr.bones == null || smplRoot == null) return;
-        var fk = smplRoot.GetComponentInChildren<SpheresToBones_FKDriver>(true);
+        var fk = FindSpheresToBonesFkInScene(resolvedSmplArmatureRoot != null ? resolvedSmplArmatureRoot : smplArmatureRootOverride != null ? smplArmatureRootOverride : smplRoot);
         if (fk == null || fk.rootBone == null) return;
 
         foreach (var b in smr.bones)
