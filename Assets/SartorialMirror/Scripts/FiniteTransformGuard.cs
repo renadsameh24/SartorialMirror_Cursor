@@ -30,6 +30,7 @@ public sealed class FiniteTransformGuard : MonoBehaviour
     void Update()
     {
         if (!Application.isPlaying) return;
+        if (root == null) root = transform;
         if (!checkEveryFrame)
         {
             if (Time.unscaledTime < _nextCheckTime) return;
