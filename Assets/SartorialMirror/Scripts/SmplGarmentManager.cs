@@ -16,19 +16,6 @@ public enum GarmentBindPoseReference
     RootBoneWorld
 }
 
-/// <summary>How we pick the uniform scale factor so the garment instance matches SMPL (size only, before bone remap).</summary>
-public enum GarmentSizeMatchMetric
-{
-    /// <summary>Median of mesh diagonal, max world AABB side, and pelvis→neck skeleton distance (when available). Robust to odd FBX units.</summary>
-    CombinedMedian = 0,
-    /// <summary>Imported mesh bounds diagonal × lossy scale (legacy).</summary>
-    MeshBoundsMagnitude = 1,
-    /// <summary>Largest side of world AABB from imported mesh bounds (helps thin/flat meshes).</summary>
-    MaxWorldAxis = 2,
-    /// <summary>Pelvis→neck/head (or shoulder→wrist) distance on SMPL vs garment transforms only.</summary>
-    TorsoBoneDistance = 3,
-}
-
 /// <summary>
 /// Drives garment bones from scene SMPL. Runs late in the frame so SMPL bones are final before we copy them.
 /// This project’s working body setup uses only <see cref="SpheresToBones_FKDriver"/> on SMPL (see README);
@@ -122,18 +109,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
              "Use this when the imported garment FBX is the correct shape but comes in at the wrong unit scale (\"huge shirt\" / tiny shirt).")]
     public bool autoScaleGarmentToSmplBounds = true;
 
-    [Tooltip("How to derive the target uniform scale (garment → SMPL). Runs before bone remap so garment skeleton distances are still valid. " +
-             "CombinedMedian is recommended for unit mismatches.")]
-    public GarmentSizeMatchMetric garmentSizeMatchMetric = GarmentSizeMatchMetric.CombinedMedian;
-
     [Tooltip("Optional extra multiplier applied after auto-scale. Use this to lock in a consistent unit conversion " +
              "when your garment FBX units differ from SMPL (e.g. 0.01 or 0.004).")]
     public float autoScaleMultiplier = 1f;
-
-    [Header("Silhouette match (optional)")]
-    [Tooltip("After uniform autoscale, apply an extra uniform scale so shoulder span (J16–J17) matches SMPL. " +
-             "Off by default — turn on only if the shirt still looks too wide/narrow after size match.")]
-    public bool matchShoulderSpanAfterAutoscale = false;
 
     [Tooltip("If true, keep snapping every frame. Can fight armature driving if alignment is already correct; try off first.")]
     public bool continuousPelvisSnap = false;
@@ -871,29 +849,6 @@ public sealed class SmplGarmentManager : MonoBehaviour
             return float.IsFinite(mag) ? mag : 0f;
         }
 
-        static float MeshWorldBoundsMaxAxisFromImported(SkinnedMeshRenderer smr)
-        {
-            if (smr == null) return 0f;
-            var m = smr.sharedMesh;
-            if (m == null) return 0f;
-            var localSize = m.bounds.size;
-            var s = AbsVec(smr.transform.lossyScale);
-            var worldSize = Vector3.Scale(localSize, s);
-            float ax = Mathf.Max(Mathf.Abs(worldSize.x), Mathf.Abs(worldSize.y), Mathf.Abs(worldSize.z));
-            return float.IsFinite(ax) ? ax : 0f;
-        }
-
-        static bool PlausibleRatio(float r) => float.IsFinite(r) && r > 0.002f && r < 500f;
-
-        static float MedianRatio(List<float> vals)
-        {
-            if (vals == null || vals.Count == 0) return 0f;
-            vals.Sort();
-            int n = vals.Count;
-            if ((n & 1) == 1) return vals[n / 2];
-            return 0.5f * (vals[n / 2 - 1] + vals[n / 2]);
-        }
-
         float SmplSkeletonMagnitudeFallback(out string source)
         {
             source = "none";
@@ -986,102 +941,34 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
         catch { /* ignore */ }
 
-        float smplMeshDiag = MeshWorldBoundsMagnitudeFromImported(smplSmr);
-        float garmentMeshDiag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
-        float smplMaxAxis = MeshWorldBoundsMaxAxisFromImported(smplSmr);
-        float garmentMaxAxis = MeshWorldBoundsMaxAxisFromImported(garmentSmr);
-        float smplTorsoLen = SmplSkeletonMagnitudeFallback(out var smplTorsoKey);
-        float garmentTorsoLen = GarmentSkeletonMagnitudeFallback(garmentRoot, out var garmentTorsoKey);
+        float smplMag = MeshWorldBoundsMagnitudeFromImported(smplSmr);
+        float garmentMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
+        if (garmentMag <= 1e-6f) return;
 
         // Heuristic sanity: a human-sized SMPL body should be on the order of 0.5–5 meters in magnitude.
         // If mesh bounds are wildly outside that, prefer skeleton-distance fallback (mesh bounds can be broken by import units).
         static bool PlausibleMagnitude(float m) => float.IsFinite(m) && m > 0.05f && m < 10f;
 
-        // Reference lengths (plausible-adjusted mesh diagonal) — used for MeshBounds mode and pass-2 convergence checks.
         string smplSource = "meshBounds";
-        float smplRefMag = smplMeshDiag;
-        if (!PlausibleMagnitude(smplRefMag))
+        if (!PlausibleMagnitude(smplMag))
         {
-            if (smplTorsoLen > 1e-6f)
-            {
-                smplRefMag = smplTorsoLen;
-                smplSource = smplTorsoKey;
-            }
-            else
-            {
-                float skel = SmplSkeletonMagnitudeFallback(out smplSource);
-                if (skel > 1e-6f) smplRefMag = skel;
-            }
+            // Mesh bounds were unusable or implausible; use skeleton distance to compute a reasonable scale.
+            float skel = SmplSkeletonMagnitudeFallback(out smplSource);
+            if (skel > 1e-6f)
+                smplMag = skel;
         }
-        if (smplRefMag <= 1e-6f) return;
+
+        if (smplMag <= 1e-6f) return;
 
         string garmentSource = "meshBounds";
-        float garmentRefMag = garmentMeshDiag;
-        if (!PlausibleMagnitude(garmentRefMag))
+        if (!PlausibleMagnitude(garmentMag))
         {
-            if (garmentTorsoLen > 1e-6f)
-            {
-                garmentRefMag = garmentTorsoLen;
-                garmentSource = garmentTorsoKey;
-            }
-            else
-            {
-                float gSkel = GarmentSkeletonMagnitudeFallback(garmentRoot, out garmentSource);
-                if (PlausibleMagnitude(gSkel)) garmentRefMag = gSkel;
-            }
+            float gSkel = GarmentSkeletonMagnitudeFallback(garmentRoot, out garmentSource);
+            if (PlausibleMagnitude(gSkel))
+                garmentMag = gSkel;
         }
-        if (garmentRefMag <= 1e-6f && garmentTorsoLen > 1e-6f)
-        {
-            garmentRefMag = garmentTorsoLen;
-            garmentSource = garmentTorsoKey;
-        }
-        if (garmentRefMag <= 1e-6f) return;
 
-        float ratio;
-        switch (garmentSizeMatchMetric)
-        {
-            case GarmentSizeMatchMetric.MeshBoundsMagnitude:
-                ratio = smplRefMag / garmentRefMag;
-                break;
-            case GarmentSizeMatchMetric.MaxWorldAxis:
-                ratio = smplMaxAxis / Mathf.Max(1e-9f, garmentMaxAxis);
-                smplSource = "maxWorldAxis";
-                garmentSource = "maxWorldAxis";
-                break;
-            case GarmentSizeMatchMetric.TorsoBoneDistance:
-                if (smplTorsoLen <= 1e-6f || garmentTorsoLen <= 1e-6f) return;
-                ratio = smplTorsoLen / garmentTorsoLen;
-                smplSource = smplTorsoKey;
-                garmentSource = garmentTorsoKey;
-                break;
-            case GarmentSizeMatchMetric.CombinedMedian:
-            default:
-            {
-                var ratios = new List<float>(4);
-                float rMesh = smplMeshDiag / Mathf.Max(1e-9f, garmentMeshDiag);
-                if (PlausibleRatio(rMesh) && PlausibleMagnitude(smplMeshDiag) && PlausibleMagnitude(garmentMeshDiag))
-                    ratios.Add(rMesh);
-                float rMax = smplMaxAxis / Mathf.Max(1e-9f, garmentMaxAxis);
-                if (PlausibleRatio(rMax) && smplMaxAxis > 1e-9f && garmentMaxAxis > 1e-9f)
-                    ratios.Add(rMax);
-                float rTorso = smplTorsoLen / Mathf.Max(1e-9f, garmentTorsoLen);
-                if (PlausibleRatio(rTorso) && PlausibleMagnitude(smplTorsoLen) && PlausibleMagnitude(garmentTorsoLen))
-                    ratios.Add(rTorso);
-                if (ratios.Count == 0)
-                {
-                    ratio = smplRefMag / Mathf.Max(1e-9f, garmentRefMag);
-                    smplSource = "combinedFallback→" + smplSource;
-                    garmentSource = "combinedFallback→" + garmentSource;
-                }
-                else
-                {
-                    ratio = MedianRatio(ratios);
-                    smplSource = $"combinedMedian({string.Join(",", ratios)})";
-                    garmentSource = $"combinedMedian(n={ratios.Count})";
-                }
-                break;
-            }
-        }
+        float ratio = smplMag / garmentMag;
         if (!float.IsFinite(ratio) || ratio <= 0f) return;
         // Avoid truly pathological scaling; however, shirts often come in 10x-1000x off due to FBX unit mismatches.
         // If we skip scaling in those cases, the garment will look "huge" and bounds/skin can glitch.
@@ -1089,7 +976,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
         {
             if (logSpawnFailures)
                 Debug.LogWarning(
-                    $"[SmplGarmentManager] Auto-scale skipped (ratio={ratio:F3}). smplRefMag={smplRefMag:F3} garmentRefMag={garmentRefMag:F3}. " +
+                    $"[SmplGarmentManager] Auto-scale skipped (ratio={ratio:F3}). smplBoundsMag={smplMag:F3} garmentBoundsMag={garmentMag:F3}. " +
                     "Garment or SMPL bounds look extreme; fix FBX units/export.",
                     garmentRoot);
             return;
@@ -1131,10 +1018,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
         float postMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
         if (postMag > 1e-6f)
         {
-            float err = Mathf.Abs(postMag - smplRefMag) / Mathf.Max(1e-6f, smplRefMag);
+            float err = Mathf.Abs(postMag - smplMag) / Mathf.Max(1e-6f, smplMag);
             if (err > 0.15f)
             {
-                float pass2 = smplRefMag / postMag;
+                float pass2 = smplMag / postMag;
                 if (float.IsFinite(pass2) && pass2 > 0.001f && pass2 < 2000f)
                 {
                     if (scaleMeshesInsteadOfRoot)
@@ -1147,67 +1034,12 @@ public sealed class SmplGarmentManager : MonoBehaviour
             }
         }
 
-        // Silhouette pass: shirts can match torso length but still look oversized vs SMPL shoulder width.
-        if (matchShoulderSpanAfterAutoscale && scaleMeshesInsteadOfRoot)
-        {
-            if (TryShoulderSpanScaleFactor(smplSmr, garmentSmr, out var shoulderFactor))
-            {
-                shoulderFactor = Mathf.Clamp(shoulderFactor, 0.5f, 2.0f);
-                if (Mathf.Abs(shoulderFactor - 1f) > 0.02f)
-                {
-                    ScaleGarmentMeshesVertices(garmentRoot, shoulderFactor);
-                    applied *= shoulderFactor;
-                    postMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
-                    try
-                    {
-                        garmentSkinnedMag = float.IsFinite(garmentSmr.bounds.size.magnitude)
-                            ? garmentSmr.bounds.size.magnitude
-                            : garmentSkinnedMag;
-                    }
-                    catch { /* ignore */ }
-                }
-            }
-        }
-
         if (logMissingBoneNames)
             Debug.Log(
-                $"[SmplGarmentManager] Auto-scaled garment by {applied:F6} (ratio={ratio:F6} * mult={mult:F6}) metric={garmentSizeMatchMetric} ({smplSource} vs {garmentSource}). " +
-                $"importedMeshDiag: smpl={smplMeshDiag:F3} garment={garmentMeshDiag:F3} refMag: smpl={smplRefMag:F3} garment={garmentRefMag:F3} postGarment={postMag:F3} | " +
+                $"[SmplGarmentManager] Auto-scaled garment by {applied:F6} (ratio={ratio:F6} * mult={mult:F6}) to match SMPL size ({smplSource} vs garment {garmentSource}). " +
+                $"importedWorldMag: smpl={smplMag:F3} garment={garmentMag:F3} postGarment={postMag:F3} | " +
                 $"skinnedBoundsMag: smpl={smplSkinnedMag:F3} garment={garmentSkinnedMag:F3}.",
                 garmentRoot);
-    }
-
-    static bool TryShoulderSpanScaleFactor(SkinnedMeshRenderer smplSmr, SkinnedMeshRenderer garmentSmr, out float factor)
-    {
-        factor = 1f;
-        if (smplSmr == null || garmentSmr == null) return false;
-
-        Transform lS = null, rS = null;
-        foreach (var b in smplSmr.bones)
-        {
-            if (!b) continue;
-            var k = ResolveSmplKey(b.name);
-            if (string.Equals(k, "J16", StringComparison.OrdinalIgnoreCase)) lS ??= b;
-            else if (string.Equals(k, "J17", StringComparison.OrdinalIgnoreCase)) rS ??= b;
-        }
-        if (lS == null || rS == null) return false;
-
-        Transform glS = null, grS = null;
-        foreach (var b in garmentSmr.bones)
-        {
-            if (!b) continue;
-            var k = ResolveSmplKey(b.name);
-            if (string.Equals(k, "J16", StringComparison.OrdinalIgnoreCase)) glS ??= b;
-            else if (string.Equals(k, "J17", StringComparison.OrdinalIgnoreCase)) grS ??= b;
-        }
-        if (glS == null || grS == null) return false;
-
-        float smplSpan = Vector3.Distance(lS.position, rS.position);
-        float garmentSpan = Vector3.Distance(glS.position, grS.position);
-        if (smplSpan <= 1e-6f || garmentSpan <= 1e-6f) return false;
-
-        factor = smplSpan / garmentSpan;
-        return float.IsFinite(factor) && factor > 0f;
     }
 
     void ScaleGarmentMeshesVertices(GameObject garmentRoot, float uniformScale)
