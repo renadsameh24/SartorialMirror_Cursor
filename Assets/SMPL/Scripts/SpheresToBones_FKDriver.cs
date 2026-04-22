@@ -55,6 +55,13 @@ public class SpheresToBones_FKDriver : MonoBehaviour
     [Tooltip("Legacy toggle (kept for existing scenes). If enabled, forces Mirror Axis = RootX at runtime.")]
     public bool mirrorAcrossRootX = false;
 
+    [Header("Left/Right swap (data fix)")]
+    [Tooltip("If enabled, swaps left/right sphere transforms (e.g. J_l_* <-> J_r_*) before driving bones. Use this when arms are flipped even with Mirror Axis=None.")]
+    public bool swapLeftRightSpheres = false;
+
+    private Transform _sphereLookupRoot;
+    private System.Collections.Generic.Dictionary<string, Transform> _spheresByName;
+
     void LateUpdate()
     {
         Transform root = rootBone != null ? rootBone.root : null;
@@ -90,10 +97,41 @@ public class SpheresToBones_FKDriver : MonoBehaviour
             return root.TransformPoint(local);
         }
 
+        Transform MaybeSwapSphere(Transform t)
+        {
+            if (!swapLeftRightSpheres || t == null) return t;
+            string n = t.name;
+
+            string swapped = n;
+            if (n.Contains("_l_")) swapped = n.Replace("_l_", "_r_");
+            else if (n.Contains("_r_")) swapped = n.Replace("_r_", "_l_");
+            else if (n.Contains("Left")) swapped = n.Replace("Left", "Right");
+            else if (n.Contains("Right")) swapped = n.Replace("Right", "Left");
+            else return t;
+
+            // Lazy-build lookup around the spheres hierarchy.
+            if (_spheresByName == null)
+            {
+                _spheresByName = new System.Collections.Generic.Dictionary<string, Transform>(System.StringComparer.Ordinal);
+                _sphereLookupRoot = t.parent != null ? t.parent : t.root;
+                foreach (var tr in _sphereLookupRoot.GetComponentsInChildren<Transform>(true))
+                {
+                    if (tr == null) continue;
+                    if (!_spheresByName.ContainsKey(tr.name))
+                        _spheresByName.Add(tr.name, tr);
+                }
+            }
+
+            if (_spheresByName.TryGetValue(swapped, out var other) && other != null)
+                return other;
+            return t;
+        }
+
         // 1) Root follow (position only is safest)
         if (followRootPosition && rootBone && rootSphere)
         {
-            var p = MirrorPos(rootSphere.position);
+            var rs = MaybeSwapSphere(rootSphere);
+            var p = MirrorPos(rs.position);
             if (Finite(p))
                 rootBone.position = p;
             else if (!_loggedNonFiniteOnce)
@@ -114,7 +152,9 @@ public class SpheresToBones_FKDriver : MonoBehaviour
             if (!s.bone || !s.boneChild || !s.sphere || !s.sphereChild) continue;
 
             Vector3 boneDir = (s.boneChild.position - s.bone.position);
-            Vector3 sphereDir = (s.sphereChild.position - s.sphere.position);
+            var sA = MaybeSwapSphere(s.sphere);
+            var sB = MaybeSwapSphere(s.sphereChild);
+            Vector3 sphereDir = (sB.position - sA.position);
             sphereDir = MirrorDir(sphereDir);
 
             if (!Finite(boneDir) || !Finite(sphereDir))
@@ -142,7 +182,8 @@ public class SpheresToBones_FKDriver : MonoBehaviour
             // Only if you REALLY want positional snapping (usually keep false)
             if (s.applyPositionToBone)
             {
-                var bp = MirrorPos(s.sphere.position);
+                var sp = MaybeSwapSphere(s.sphere);
+                var bp = MirrorPos(sp.position);
                 if (Finite(bp))
                     s.bone.position = bp;
                 else if (!_loggedNonFiniteOnce)
