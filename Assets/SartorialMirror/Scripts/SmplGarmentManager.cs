@@ -1948,8 +1948,22 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     void LateUpdate()
     {
+        // Primary drive path: either in LateUpdate, or in the EOF coroutine.
+        // Safety net: if EOF was requested but the coroutine didn't start (e.g. component enabled order),
+        // still drive here so the garment never freezes silently.
         if (!applyGarmentDriveAtEndOfFrame)
+        {
             ApplyGarmentArmatureDrive();
+        }
+        else
+        {
+            if (driveGarmentArmatureFromSmpl && garmentDriveEndOfFrameRoutine == null)
+            {
+                // Try to start it; if it can't, at least drive once per LateUpdate.
+                TryStartEndOfFrameGarmentDrive();
+                ApplyGarmentArmatureDrive();
+            }
+        }
 
         if (!continuousPelvisSnap) return;
         if (!snapGarmentToSmplPelvis) return;
