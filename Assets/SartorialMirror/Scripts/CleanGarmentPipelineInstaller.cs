@@ -68,6 +68,9 @@ public sealed class CleanGarmentPipelineInstaller : MonoBehaviour
             mgr.matchDrivenBonesToSmplWorld = true;
         }
 
+        // Always allow runtime scale fix: many source garments have different units than SMPL.
+        mgr.autoScaleGarmentToSmplBounds = true;
+
         // Spawn one garment as baseline.
         if (spawnGarmentIndex >= 0 && mgr.HasCatalog)
         {
