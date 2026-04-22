@@ -845,6 +845,28 @@ public sealed class SmplGarmentManager : MonoBehaviour
             return float.IsFinite(mag) ? mag : 0f;
         }
 
+        float SmplSkeletonMagnitudeFallback()
+        {
+            // Mesh may be hidden/disabled; fall back to driven skeleton distances.
+            if (smplBonesByName == null || smplBonesByName.Count == 0)
+                EnsureBoneMapExcludingGarments();
+            if (smplBonesByName == null || smplBonesByName.Count == 0) return 0f;
+
+            bool TryGet(string k, out Transform t) => smplBonesByName.TryGetValue(k, out t) && t != null;
+
+            // Prefer pelvis→neck/head, else shoulder→wrist.
+            if (TryGet("J00", out var pelvis) && (TryGet("J12", out var neck) || TryGet("J15", out neck)))
+                return Vector3.Distance(pelvis.position, neck.position);
+
+            if (TryGet("J16", out var lShoulder) && TryGet("J20", out var lWrist))
+                return Vector3.Distance(lShoulder.position, lWrist.position);
+
+            if (TryGet("J17", out var rShoulder) && TryGet("J21", out var rWrist))
+                return Vector3.Distance(rShoulder.position, rWrist.position);
+
+            return 0f;
+        }
+
         // Find a representative SMPL mesh renderer (exclude anything under _Garments).
         EnsureGarmentsParent();
         SkinnedMeshRenderer smplSmr = null;
@@ -860,7 +882,17 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         float smplMag = MeshWorldBoundsMagnitudeFromImported(smplSmr);
         float garmentMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
-        if (smplMag <= 1e-6f || garmentMag <= 1e-6f) return;
+        if (garmentMag <= 1e-6f) return;
+
+        if (smplMag <= 1e-6f)
+        {
+            // Mesh bounds were unusable; use skeleton distance to compute a reasonable scale.
+            float skel = SmplSkeletonMagnitudeFallback();
+            if (skel > 1e-6f)
+                smplMag = skel;
+        }
+
+        if (smplMag <= 1e-6f) return;
 
         float ratio = smplMag / garmentMag;
         if (!float.IsFinite(ratio) || ratio <= 0f) return;
