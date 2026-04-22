@@ -40,8 +40,19 @@ public class SpheresToBones_FKDriver : MonoBehaviour
     [Range(0f, 1f)] public float rotLerp = 1f; // 1 = exact, 0.3 = smoother
 
     [Header("Mirror / coordinate fix")]
-    [Tooltip("If enabled, mirrors the incoming sphere vectors/positions across the SMPL root local X axis. " +
+    public enum MirrorAxis
+    {
+        None,
+        RootX,
+        RootY,
+        RootZ
+    }
+
+    [Tooltip("Mirror the incoming sphere vectors/positions across the SMPL root local axis. " +
              "Use this when left/right looks swapped or arms move 'the opposite way' relative to the camera.")]
+    public MirrorAxis mirrorAxis = MirrorAxis.None;
+
+    [Tooltip("Legacy toggle (kept for existing scenes). If enabled, forces Mirror Axis = RootX at runtime.")]
     public bool mirrorAcrossRootX = false;
 
     void LateUpdate()
@@ -49,19 +60,33 @@ public class SpheresToBones_FKDriver : MonoBehaviour
         Transform root = rootBone != null ? rootBone.root : null;
         if (rootBone != null) root = rootBone; // mirror in rootBone space by default (stable even if rig is nested)
 
+        // Back-compat: old scenes used mirrorAcrossRootX.
+        if (mirrorAcrossRootX && mirrorAxis == MirrorAxis.None)
+            mirrorAxis = MirrorAxis.RootX;
+
         Vector3 MirrorDir(Vector3 worldDir)
         {
-            if (!mirrorAcrossRootX || root == null) return worldDir;
+            if (mirrorAxis == MirrorAxis.None || root == null) return worldDir;
             var local = root.InverseTransformDirection(worldDir);
-            local.x = -local.x;
+            switch (mirrorAxis)
+            {
+                case MirrorAxis.RootX: local.x = -local.x; break;
+                case MirrorAxis.RootY: local.y = -local.y; break;
+                case MirrorAxis.RootZ: local.z = -local.z; break;
+            }
             return root.TransformDirection(local);
         }
 
         Vector3 MirrorPos(Vector3 worldPos)
         {
-            if (!mirrorAcrossRootX || root == null) return worldPos;
+            if (mirrorAxis == MirrorAxis.None || root == null) return worldPos;
             var local = root.InverseTransformPoint(worldPos);
-            local.x = -local.x;
+            switch (mirrorAxis)
+            {
+                case MirrorAxis.RootX: local.x = -local.x; break;
+                case MirrorAxis.RootY: local.y = -local.y; break;
+                case MirrorAxis.RootZ: local.z = -local.z; break;
+            }
             return root.TransformPoint(local);
         }
 
