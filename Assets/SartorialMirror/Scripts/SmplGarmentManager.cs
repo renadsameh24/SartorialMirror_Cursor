@@ -932,6 +932,15 @@ public sealed class SmplGarmentManager : MonoBehaviour
         var garmentSmr = garmentRoot.GetComponentInChildren<SkinnedMeshRenderer>(true);
         if (smplSmr == null || garmentSmr == null) return;
 
+        float smplSkinnedMag = 0f;
+        float garmentSkinnedMag = 0f;
+        try
+        {
+            smplSkinnedMag = float.IsFinite(smplSmr.bounds.size.magnitude) ? smplSmr.bounds.size.magnitude : 0f;
+            garmentSkinnedMag = float.IsFinite(garmentSmr.bounds.size.magnitude) ? garmentSmr.bounds.size.magnitude : 0f;
+        }
+        catch { /* ignore */ }
+
         float smplMag = MeshWorldBoundsMagnitudeFromImported(smplSmr);
         float garmentMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
         if (garmentMag <= 1e-6f) return;
@@ -1012,7 +1021,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         if (logMissingBoneNames)
             Debug.Log(
-                $"[SmplGarmentManager] Auto-scaled garment by {applied:F6} (ratio={ratio:F6} * mult={mult:F6}) to match SMPL size ({smplSource} vs garment {garmentSource}). smplMag={smplMag:F3} garmentMag={garmentMag:F3} postGarmentMag={postMag:F3}.",
+                $"[SmplGarmentManager] Auto-scaled garment by {applied:F6} (ratio={ratio:F6} * mult={mult:F6}) to match SMPL size ({smplSource} vs garment {garmentSource}). " +
+                $"importedWorldMag: smpl={smplMag:F3} garment={garmentMag:F3} postGarment={postMag:F3} | " +
+                $"skinnedBoundsMag: smpl={smplSkinnedMag:F3} garment={garmentSkinnedMag:F3}.",
                 garmentRoot);
     }
 
