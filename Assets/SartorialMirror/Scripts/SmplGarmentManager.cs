@@ -937,10 +937,32 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         float mult = float.IsFinite(autoScaleMultiplier) ? autoScaleMultiplier : 1f;
         if (mult <= 0f) mult = 1f;
-        garmentRoot.transform.localScale *= (ratio * mult);
+
+        // Apply in up to 2 passes. Some FBXs have nested scaling; a single multiply can still leave the world size off.
+        // We measure again after scaling and re-apply once if needed.
+        float applied = ratio * mult;
+        var pre = garmentRoot.transform.localScale;
+        garmentRoot.transform.localScale = pre * applied;
+
+        float postMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
+        if (postMag > 1e-6f)
+        {
+            float err = Mathf.Abs(postMag - smplMag) / Mathf.Max(1e-6f, smplMag);
+            if (err > 0.15f)
+            {
+                float pass2 = smplMag / postMag;
+                if (float.IsFinite(pass2) && pass2 > 0.001f && pass2 < 2000f)
+                {
+                    garmentRoot.transform.localScale *= pass2;
+                    applied *= pass2;
+                    postMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
+                }
+            }
+        }
+
         if (logMissingBoneNames)
             Debug.Log(
-                $"[SmplGarmentManager] Auto-scaled garment by {(ratio * mult):F4} (ratio={ratio:F4} * mult={mult:F4}) to match SMPL size ({smplSource}). smplMag={smplMag:F3} garmentMag={garmentMag:F3}.",
+                $"[SmplGarmentManager] Auto-scaled garment by {applied:F6} (ratio={ratio:F6} * mult={mult:F6}) to match SMPL size ({smplSource}). smplMag={smplMag:F3} garmentMag={garmentMag:F3} postGarmentMag={postMag:F3}.",
                 garmentRoot);
     }
 
