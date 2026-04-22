@@ -12,9 +12,9 @@ namespace SartorialMirror.Editor
     public static class GarmentCatalogLinker
     {
         private const string CatalogPath = "Assets/SartorialMirror/GarmentCatalog.asset";
-        private const string PreparedFbx = "Assets/garments_prepared/Flannel_OriginalRig_Drive.fbx";
+        private const string PreparedFbx = "Assets/garments_prepared/Flannel_SMPL_Skinned.fbx";
 
-        [MenuItem("SartorialMirror/Link prepared Flannel FBX to GarmentCatalog")]
+        [MenuItem("Tools/SartorialMirror/Link prepared Flannel (SMPL skinned) to GarmentCatalog")]
         public static void Link()
         {
             bool ok = TryLink();
