@@ -6,6 +6,10 @@ using UnityEngine;
 
 public class JointPlaybackStreamV2 : MonoBehaviour
 {
+    static bool Finite(Vector3 v) => float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
+
+    private bool _loggedNonFiniteOnce = false;
+    private int _nonFiniteCount = 0;
     public enum Mode
     {
         SequencePlayback, // frames[] inside one JSON
@@ -290,7 +294,19 @@ public class JointPlaybackStreamV2 : MonoBehaviour
         foreach (var kv in jointsRaw)
         {
             string key = Norm(kv.Key);
-            joints[key] = FixCoords(kv.Value);
+            var v = FixCoords(kv.Value);
+            if (!Finite(v))
+            {
+                _nonFiniteCount++;
+                if (!_loggedNonFiniteOnce)
+                {
+                    _loggedNonFiniteOnce = true;
+                    Debug.LogError($"[PlaybackV2] Non-finite joint value detected for key='{key}' (frame={_frameIndex}). " +
+                                   "Skipping invalid joints to prevent NaN propagation.", this);
+                }
+                continue;
+            }
+            joints[key] = v;
         }
 
         Vector3 offset = new Vector3(0f, globalLiftY, 0f);
@@ -322,6 +338,17 @@ public class JointPlaybackStreamV2 : MonoBehaviour
                 ? pelvisPos + (worldPos - pelvisPos) * rigScale
                 : worldPos;
 
+            if (!Finite(targetPos))
+            {
+                _nonFiniteCount++;
+                if (!_loggedNonFiniteOnce)
+                {
+                    _loggedNonFiniteOnce = true;
+                    Debug.LogError($"[PlaybackV2] Non-finite targetPos for key='{kv.Key}' (frame={_frameIndex}). Skipping write.", this);
+                }
+                continue;
+            }
+
             if (snapInstant || positionLerp >= 0.999f)
                 sphereT.position = targetPos;
             else
@@ -348,6 +375,9 @@ public class JointPlaybackStreamV2 : MonoBehaviour
                 Vector3 targetPos = hasPelvis
                     ? pelvisPos + (worldPos - pelvisPos) * rigScale
                     : worldPos;
+
+                if (!Finite(targetPos))
+                    continue;
 
                 if (snapInstant || positionLerp >= 0.999f)
                     sphereT.position = targetPos;
@@ -406,6 +436,7 @@ public class JointPlaybackStreamV2 : MonoBehaviour
 
     Vector3 FixCoords(Vector3 v)
     {
+        if (!Finite(v)) return v;
         v *= positionScale;
         if (swapYZ) v = new Vector3(v.x, v.z, v.y);
         if (invertX) v.x *= -1f;
