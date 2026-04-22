@@ -159,11 +159,19 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("Only affects Drive Garment Armature From SMPL mode. Applies an extra roll (typically 180°) around the forearm/wrist axis to counter bone-roll mismatches that cause 180° twists.")]
     public bool applyArmTwistFix = false;
 
+    [Tooltip("Forearm roll correction (degrees). Typical values: 180 or -180.")]
     [Range(-180f, 180f)]
-    public float armTwistFixDegrees = 180f;
+    public float forearmTwistFixDegrees = 180f;
 
-    [Tooltip("Which SMPL keys to apply the twist fix to. Defaults cover forearms + wrists.")]
-    public string[] armTwistFixKeys = { "J18", "J19", "J20", "J21" };
+    [Tooltip("Wrist roll correction (degrees). Often the opposite sign from forearm.")]
+    [Range(-180f, 180f)]
+    public float wristTwistFixDegrees = -180f;
+
+    [Tooltip("Which SMPL keys count as forearms for twist fix.")]
+    public string[] forearmTwistFixKeys = { "J18", "J19" };
+
+    [Tooltip("Which SMPL keys count as wrists for twist fix.")]
+    public string[] wristTwistFixKeys = { "J20", "J21" };
 
     [Tooltip("If true, each frame uses a pre-sampled quaternion offset between garment and SMPL bone (see RecordBindPoseRotationOffsets). " +
              "If arms still look wrong, leave this off and use simple world copy + end-of-frame drive.")]
@@ -284,7 +292,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 driveGarmentArmatureFromSmpl = true;
                 recalculateBindPosesAfterRemap = false;
                 applyArmTwistFix = true;
-                armTwistFixDegrees = 180f;
+                forearmTwistFixDegrees = 180f;
+                wristTwistFixDegrees = -180f;
                 useBindPoseRotationOffset = true;
                 applyGarmentDriveAtEndOfFrame = true;
                 matchDrivenBonesToSmplWorld = true;
@@ -296,7 +305,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 driveGarmentArmatureFromSmpl = true;
                 recalculateBindPosesAfterRemap = false;
                 applyArmTwistFix = true;
-                armTwistFixDegrees = 180f;
+                forearmTwistFixDegrees = 180f;
+                wristTwistFixDegrees = -180f;
                 useBindPoseRotationOffset = true;
                 applyGarmentDriveAtEndOfFrame = true;
                 matchDrivenBonesToSmplWorld = true;
@@ -1115,11 +1125,11 @@ public sealed class SmplGarmentManager : MonoBehaviour
             if (applyArmTwistFix && armTwistFixKeys != null && armTwistFixKeys.Length > 0)
             {
                 var j = ResolveSmplKey(g != null ? g.name : "");
-                if (!string.IsNullOrEmpty(j) && ShouldApplyTwistFixToKey(j))
+                if (!string.IsNullOrEmpty(j) && TryGetTwistFixDegreesForKey(j, out var deg))
                 {
                     Vector3 axis = GetSmplBoneAxisForTwist(j);
                     if (axis.sqrMagnitude > 1e-8f)
-                        rot = Quaternion.AngleAxis(armTwistFixDegrees, axis) * rot;
+                        rot = Quaternion.AngleAxis(deg, axis) * rot;
                 }
             }
 
@@ -1147,13 +1157,35 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
     }
 
-    bool ShouldApplyTwistFixToKey(string j)
+    bool TryGetTwistFixDegreesForKey(string j, out float degrees)
     {
-        for (int i = 0; i < armTwistFixKeys.Length; i++)
+        degrees = 0f;
+        if (string.IsNullOrEmpty(j)) return false;
+
+        if (forearmTwistFixKeys != null)
         {
-            if (string.Equals(armTwistFixKeys[i], j, StringComparison.OrdinalIgnoreCase))
-                return true;
+            for (int i = 0; i < forearmTwistFixKeys.Length; i++)
+            {
+                if (string.Equals(forearmTwistFixKeys[i], j, StringComparison.OrdinalIgnoreCase))
+                {
+                    degrees = forearmTwistFixDegrees;
+                    return true;
+                }
+            }
         }
+
+        if (wristTwistFixKeys != null)
+        {
+            for (int i = 0; i < wristTwistFixKeys.Length; i++)
+            {
+                if (string.Equals(wristTwistFixKeys[i], j, StringComparison.OrdinalIgnoreCase))
+                {
+                    degrees = wristTwistFixDegrees;
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 
