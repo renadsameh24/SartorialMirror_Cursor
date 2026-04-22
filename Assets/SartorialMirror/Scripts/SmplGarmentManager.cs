@@ -23,6 +23,7 @@ public enum GarmentBindPoseReference
 /// so we run after <see cref="SpheresToBones_FKDriver"/> (2500), <see cref="FollowTransform"/> (1000), etc.
 /// </summary>
 [DefaultExecutionOrder(3200)]
+[DisallowMultipleComponent]
 public sealed class SmplGarmentManager : MonoBehaviour
 {
     public enum TuningPreset
@@ -259,8 +260,12 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private Quaternion _hbLastGarmentJ16 = Quaternion.identity;
     private bool _hbInit = false;
 
+    private static SmplGarmentManager _activeInstance;
+
     void Awake()
     {
+        EnforceSingletonManager();
+        if (!enabled) return;
         EnsureSmplRoot();
         AutoResolveDrivenArmatureRootFromFk();
         EnsureBoneMapExcludingGarments();
@@ -269,10 +274,27 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     void OnEnable()
     {
+        EnforceSingletonManager();
+        if (!enabled) return;
         if (applyPresetOnEnable)
             ApplyPreset(tuningPreset);
         AutoResolveDrivenArmatureRootFromFk();
         TryStartEndOfFrameGarmentDrive();
+    }
+
+    void EnforceSingletonManager()
+    {
+        if (_activeInstance == null)
+        {
+            _activeInstance = this;
+            return;
+        }
+        if (_activeInstance == this) return;
+
+        Debug.LogWarning(
+            $"[SmplGarmentManager] Disabling duplicate manager on '{gameObject.name}'. Keeping '{_activeInstance.gameObject.name}'.",
+            this);
+        enabled = false;
     }
 
     void Start()
@@ -714,6 +736,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         ClearActive();
 
+        // Guarantee only one garment exists under _Garments even if the scene previously spawned extras.
+        EnsureGarmentsParent();
+        DestroyAllGarmentsUnderParent();
+
         ActiveGarmentInstance = Instantiate(entry.garmentPrefab, garmentsParent);
         ActiveGarmentInstance.name = $"Garment_{index}_{entry.garmentPrefab.name}";
         ActiveGarmentInstance.AddComponent<GarmentInstanceTag>();
@@ -785,6 +811,18 @@ public sealed class SmplGarmentManager : MonoBehaviour
         ApplyActiveColorVariant();
         LogPipelineDiagnosisAfterSpawn();
         return true;
+    }
+
+    void DestroyAllGarmentsUnderParent()
+    {
+        if (garmentsParent == null) return;
+        for (int i = garmentsParent.childCount - 1; i >= 0; i--)
+        {
+            var child = garmentsParent.GetChild(i);
+            if (child == null) continue;
+            if (Application.isPlaying) Destroy(child.gameObject);
+            else DestroyImmediate(child.gameObject);
+        }
     }
 
     void AutoScaleGarmentInstanceToSmpl(GameObject garmentRoot)
