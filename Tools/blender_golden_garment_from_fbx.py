@@ -26,6 +26,7 @@ Optional env:
   SKIP_KD_FALLBACK=0                   # set 1 to never use KD-tree
   FORCE_KD=1                           # always run weight copy (BVH or VERTEX)
   WEIGHT_COPY_METHOD=BVH               # BVH = nearest triangle on body surface (better sleeves); VERTEX = nearest body vertex
+  DISALLOW_BONES=J15,J22,J23           # comma-separated vertex-group names to zero out after transfer (default: head + hands)
 """
 
 from __future__ import annotations
@@ -54,6 +55,9 @@ MIN_INFLUENCING_VGROUPS = int(os.environ.get("MIN_INFLUENCING_VGROUPS", "8"))
 SKIP_KD_FALLBACK = os.environ.get("SKIP_KD_FALLBACK", "0").strip() in ("1", "true", "yes", "on")
 FORCE_KD = os.environ.get("FORCE_KD", "0").strip() in ("1", "true", "yes", "on")
 WEIGHT_COPY_METHOD = os.environ.get("WEIGHT_COPY_METHOD", "BVH").strip().upper()
+DISALLOW_BONES = tuple(
+    s.strip() for s in (os.environ.get("DISALLOW_BONES", "J15,J22,J23") or "").split(",") if s.strip()
+)
 
 
 def objs_by_type(t: str):
@@ -449,6 +453,58 @@ def remove_orphan_vertex_groups_not_on_armature(garment: bpy.types.Object, arm: 
     log(f"Vertex groups after pruning non-armature names: {len(garment.vertex_groups)}")
 
 
+def disallow_vertex_groups_and_renormalize(garment: bpy.types.Object, fallback_group: str = "J09") -> None:
+    """
+    Zero out weights for DISALLOW_BONES (e.g. head/hands) then renormalize per-vertex.
+    If a vertex would end up with no weights, assign it fully to fallback_group.
+    """
+    if not DISALLOW_BONES:
+        return
+
+    mesh = garment.data
+    if mesh is None or len(mesh.vertices) == 0:
+        return
+
+    # Map group name -> index for fast filtering.
+    name_to_idx: dict[str, int] = {g.name: g.index for g in garment.vertex_groups}
+    disallow_idx = {name_to_idx[n] for n in DISALLOW_BONES if n in name_to_idx}
+    if not disallow_idx:
+        log(f"DISALLOW_BONES set but none matched existing groups: {DISALLOW_BONES}")
+        return
+
+    fb_idx = name_to_idx.get(fallback_group)
+    if fb_idx is None:
+        # Create fallback group if missing.
+        vg = garment.vertex_groups.new(name=fallback_group)
+        fb_idx = vg.index
+        name_to_idx[fallback_group] = fb_idx
+
+    # For each vertex: collect weights, drop disallowed, renormalize.
+    for v in mesh.vertices:
+        kept: list[tuple[int, float]] = []
+        for ge in v.groups:
+            if ge.group in disallow_idx:
+                continue
+            if ge.weight > 1e-12:
+                kept.append((ge.group, float(ge.weight)))
+
+        if not kept:
+            # Set fallback group to 1.0.
+            garment.vertex_groups[fb_idx].add([v.index], 1.0, "REPLACE")
+            continue
+
+        s = sum(w for _gi, w in kept)
+        if s < 1e-12:
+            garment.vertex_groups[fb_idx].add([v.index], 1.0, "REPLACE")
+            continue
+
+        inv = 1.0 / s
+        for gi, w in kept:
+            garment.vertex_groups[gi].add([v.index], w * inv, "REPLACE")
+
+    log(f"Zeroed disallowed groups and renormalized: {DISALLOW_BONES}")
+
+
 def delete_extra_armatures(keep: bpy.types.Object) -> None:
     for o in list(objs_by_type("ARMATURE")):
         if o != keep:
@@ -542,6 +598,7 @@ def run() -> int:
         log(f"After weight copy: influencing vertex groups = {infl2}")
 
     remove_orphan_vertex_groups_not_on_armature(garment, arm)
+    disallow_vertex_groups_and_renormalize(garment, fallback_group="J09")
     normalize_weights(garment)
     smooth_vertex_weights_light(garment, iterations=1)
     normalize_weights(garment)
