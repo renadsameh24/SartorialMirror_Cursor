@@ -734,6 +734,25 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
         }
 
+        // If this garment is already SMPL-skinned (bones named J00.. and mesh has multi-bone weights),
+        // prefer Remap mode. Drive mode can "double transform" or fight bind/rest assumptions and cause
+        // the exact stretching/twisting glitches users report even when weights are correct.
+        bool looksSmplSkinned = LooksLikeSmplSkinnedGarment(ActiveGarmentInstance);
+        if (looksSmplSkinned && driveGarmentArmatureFromSmpl)
+        {
+            if (logSpawnFailures)
+                Debug.LogWarning(
+                    "[SmplGarmentManager] Detected SMPL-skinned garment; forcing Remap mode for stability (Drive mode can cause twist/stretch even with correct weights).",
+                    ActiveGarmentInstance);
+            driveGarmentArmatureFromSmpl = false;
+            applyArmTwistFix = false;
+            useBindPoseRotationOffset = false;
+            clampBoneStretch = false;
+            drivePositions = false;
+            matchDrivenBonesToSmplWorld = true;
+            driveWorldPositionInDriveMode = false;
+        }
+
         // Drive mode with an empty map leaves bones on the prefab armature while we disable Animators → frozen mesh.
         bool useArmatureDrive = driveGarmentArmatureFromSmpl;
         if (useArmatureDrive)
@@ -794,13 +813,47 @@ public sealed class SmplGarmentManager : MonoBehaviour
         if (ratio < 0.1f || ratio > 10f)
         {
             if (logSpawnFailures)
-                Debug.LogWarning($"[SmplGarmentManager] Auto-scale skipped (ratio={ratio:F3}). Garment or SMPL bounds look extreme; fix FBX units/export.", garmentRoot);
+                Debug.LogWarning(
+                    $"[SmplGarmentManager] Auto-scale skipped (ratio={ratio:F3}). smplBoundsMag={smplMag:F3} garmentBoundsMag={garmentMag:F3}. " +
+                    "Garment or SMPL bounds look extreme; fix FBX units/export.",
+                    garmentRoot);
             return;
         }
 
         garmentRoot.transform.localScale *= ratio;
         if (logMissingBoneNames)
-            Debug.Log($"[SmplGarmentManager] Auto-scaled garment instance by {ratio:F4} to match SMPL bounds.", garmentRoot);
+            Debug.Log(
+                $"[SmplGarmentManager] Auto-scaled garment by {ratio:F4} to match SMPL bounds. smplBoundsMag={smplMag:F3} garmentBoundsMag={garmentMag:F3}.",
+                garmentRoot);
+    }
+
+    static bool LooksLikeSmplSkinnedGarment(GameObject garmentRoot)
+    {
+        if (garmentRoot == null) return false;
+        var smr = garmentRoot.GetComponentInChildren<SkinnedMeshRenderer>(true);
+        if (smr == null || smr.sharedMesh == null) return false;
+        var bones = smr.bones;
+        if (bones == null || bones.Length < 10) return false;
+        var bws = smr.sharedMesh.boneWeights;
+        if (bws == null || bws.Length == 0) return false;
+
+        bool hasJ00 = false;
+        int jNamedBones = 0;
+        for (int i = 0; i < bones.Length; i++)
+        {
+            var b = bones[i];
+            if (b == null) continue;
+            var key = ResolveSmplKey(b.name);
+            if (string.Equals(key, "J00", StringComparison.OrdinalIgnoreCase)) hasJ00 = true;
+            if (key.Length == 3 && key[0] == 'J' && char.IsDigit(key[1]) && char.IsDigit(key[2])) jNamedBones++;
+        }
+
+        if (!hasJ00) return false;
+        if (jNamedBones < Mathf.Min(10, bones.Length / 2)) return false;
+
+        // If Unity reports >1 influencing bone, it's truly skinned. (We re-use the same threshold as diagnosis.)
+        int infl = CountBonesInfluencingMesh(smr);
+        return infl >= 8;
     }
 
 #if UNITY_EDITOR
