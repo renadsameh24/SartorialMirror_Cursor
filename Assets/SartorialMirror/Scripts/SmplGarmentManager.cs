@@ -1129,6 +1129,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
         garmentToSmplBoneMap = map.Count > 0 ? map : null;
         if (garmentToSmplBoneMap == null)
             Debug.LogWarning("Garment armature drive: no matching bones found between garment armature and SMPL rig.", garmentRoot);
+        else if (logMissingBoneNames)
+            Debug.Log($"[SmplGarmentManager] Drive map built: {garmentToSmplBoneMap.Count} bone pairs (example: {GetFirstDrivePairName(garmentToSmplBoneMap)}).", garmentRoot);
 
         if (clampBoneStretch && garmentToSmplBoneMap != null)
         {
@@ -1142,6 +1144,16 @@ public sealed class SmplGarmentManager : MonoBehaviour
             }
         }
 
+    }
+
+    static string GetFirstDrivePairName(Dictionary<Transform, Transform> map)
+    {
+        foreach (var kv in map)
+        {
+            if (kv.Key == null || kv.Value == null) continue;
+            return $"{kv.Key.name}→{kv.Value.name}";
+        }
+        return "";
     }
 
     void RecordBindPoseRotationOffsets()
