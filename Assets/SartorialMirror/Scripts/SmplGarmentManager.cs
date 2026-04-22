@@ -829,6 +829,22 @@ public sealed class SmplGarmentManager : MonoBehaviour
     {
         if (garmentRoot == null || smplRoot == null) return;
 
+        static Vector3 AbsVec(Vector3 v) => new Vector3(Mathf.Abs(v.x), Mathf.Abs(v.y), Mathf.Abs(v.z));
+
+        static float MeshWorldBoundsMagnitude(SkinnedMeshRenderer smr)
+        {
+            if (smr == null) return 0f;
+            var m = smr.sharedMesh;
+            if (m == null) return 0f;
+            // Use imported mesh bounds, not runtime skinned bounds (which can become NaN/Inf and spam "invalid AABB").
+            // Approximate world size via renderer transform scale.
+            var localSize = m.bounds.size;
+            var s = AbsVec(smr.transform.lossyScale);
+            var worldSize = Vector3.Scale(localSize, s);
+            float mag = worldSize.magnitude;
+            return float.IsFinite(mag) ? mag : 0f;
+        }
+
         // Find a representative SMPL mesh renderer (exclude anything under _Garments).
         EnsureGarmentsParent();
         SkinnedMeshRenderer smplSmr = null;
@@ -842,11 +858,12 @@ public sealed class SmplGarmentManager : MonoBehaviour
         var garmentSmr = garmentRoot.GetComponentInChildren<SkinnedMeshRenderer>(true);
         if (smplSmr == null || garmentSmr == null) return;
 
-        float smplMag = smplSmr.bounds.size.magnitude;
-        float garmentMag = garmentSmr.bounds.size.magnitude;
+        float smplMag = MeshWorldBoundsMagnitude(smplSmr);
+        float garmentMag = MeshWorldBoundsMagnitude(garmentSmr);
         if (smplMag <= 1e-6f || garmentMag <= 1e-6f) return;
 
         float ratio = smplMag / garmentMag;
+        if (!float.IsFinite(ratio) || ratio <= 0f) return;
         // Avoid truly pathological scaling; however, shirts often come in 10x-100x off due to FBX unit mismatches.
         // If we skip scaling in those cases, the garment will look "huge" and bounds/skin can glitch.
         if (ratio < 0.005f || ratio > 200f)
