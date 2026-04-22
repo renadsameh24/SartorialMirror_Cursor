@@ -224,6 +224,9 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Range(2, 32)]
     public int diagnosisMinHealthyInfluencingBones = 8;
 
+    [Tooltip("If true, logs once per second whether garment drive runs and whether SMPL bones are changing.")]
+    public bool logDriveHeartbeat = true;
+
     private Transform garmentsParent;
     private Dictionary<string, Transform> smplBonesByName;
     private Transform cachedSmplPelvis;
@@ -237,6 +240,11 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private Coroutine garmentDriveEndOfFrameRoutine;
     private readonly List<(Transform g, Transform s, int depth)> _driveBonesSorted = new(48);
     private readonly List<Mesh> runtimeGarmentMeshCopies = new();
+    private int _driveApplyCountThisSecond = 0;
+    private float _driveNextHeartbeatTime = 0f;
+    private Quaternion _hbLastSmplJ16 = Quaternion.identity;
+    private Quaternion _hbLastGarmentJ16 = Quaternion.identity;
+    private bool _hbInit = false;
 
     void Awake()
     {
@@ -1222,6 +1230,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     {
         if (!driveGarmentArmatureFromSmpl) return;
         if (garmentToSmplBoneMap == null || garmentToSmplBoneMap.Count == 0) return;
+        _driveApplyCountThisSecond++;
 
         if (pendingBindPoseSample && useBindPoseRotationOffset)
         {
@@ -1288,6 +1297,60 @@ public sealed class SmplGarmentManager : MonoBehaviour
                     g.position = s.position + offset * (maxD / len);
             }
         }
+    }
+
+    void DriveHeartbeat()
+    {
+        if (!logDriveHeartbeat) return;
+        if (!driveGarmentArmatureFromSmpl) return;
+        if (!Application.isPlaying) return;
+        if (Time.unscaledTime < _driveNextHeartbeatTime) return;
+        _driveNextHeartbeatTime = Time.unscaledTime + 1f;
+
+        // Sample one representative arm bone on SMPL + garment (if we can find them) to detect motion.
+        Transform smplJ16 = null;
+        if (smplBonesByName != null) smplBonesByName.TryGetValue("J16", out smplJ16);
+
+        Transform garmentJ16 = null;
+        if (ActiveGarmentInstance != null)
+        {
+            foreach (var t in ActiveGarmentInstance.GetComponentsInChildren<Transform>(true))
+            {
+                if (t == null) continue;
+                if (string.Equals(ResolveSmplKey(t.name), "J16", StringComparison.OrdinalIgnoreCase))
+                {
+                    garmentJ16 = t;
+                    break;
+                }
+            }
+        }
+
+        bool smplMoves = false;
+        bool garmentMoves = false;
+        if (smplJ16 != null && garmentJ16 != null)
+        {
+            if (!_hbInit)
+            {
+                _hbLastSmplJ16 = smplJ16.rotation;
+                _hbLastGarmentJ16 = garmentJ16.rotation;
+                _hbInit = true;
+            }
+            else
+            {
+                smplMoves = Quaternion.Angle(_hbLastSmplJ16, smplJ16.rotation) > 0.5f;
+                garmentMoves = Quaternion.Angle(_hbLastGarmentJ16, garmentJ16.rotation) > 0.5f;
+                _hbLastSmplJ16 = smplJ16.rotation;
+                _hbLastGarmentJ16 = garmentJ16.rotation;
+            }
+        }
+
+        Debug.Log(
+            $"[SmplGarmentManager] Drive heartbeat: applyCalls/sec={_driveApplyCountThisSecond}, mapPairs={(garmentToSmplBoneMap != null ? garmentToSmplBoneMap.Count : 0)}, " +
+            $"smplJ16={(smplJ16 != null ? (smplMoves ? "MOVING" : "static") : "missing")}, " +
+            $"garmentJ16={(garmentJ16 != null ? (garmentMoves ? "MOVING" : "static") : "missing")}",
+            this);
+
+        _driveApplyCountThisSecond = 0;
     }
 
     bool TryGetTwistFixDegreesForKey(string j, out float degrees)
@@ -1976,6 +2039,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 ApplyGarmentArmatureDrive();
             }
         }
+
+        DriveHeartbeat();
 
         if (!continuousPelvisSnap) return;
         if (!snapGarmentToSmplPelvis) return;
