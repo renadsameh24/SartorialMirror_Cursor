@@ -35,11 +35,35 @@ public class SpheresToBones_FKDriver : MonoBehaviour
     [Header("Smoothing")]
     [Range(0f, 1f)] public float rotLerp = 1f; // 1 = exact, 0.3 = smoother
 
+    [Header("Mirror / coordinate fix")]
+    [Tooltip("If enabled, mirrors the incoming sphere vectors/positions across the SMPL root local X axis. " +
+             "Use this when left/right looks swapped or arms move 'the opposite way' relative to the camera.")]
+    public bool mirrorAcrossRootX = false;
+
     void LateUpdate()
     {
+        Transform root = rootBone != null ? rootBone.root : null;
+        if (rootBone != null) root = rootBone; // mirror in rootBone space by default (stable even if rig is nested)
+
+        Vector3 MirrorDir(Vector3 worldDir)
+        {
+            if (!mirrorAcrossRootX || root == null) return worldDir;
+            var local = root.InverseTransformDirection(worldDir);
+            local.x = -local.x;
+            return root.TransformDirection(local);
+        }
+
+        Vector3 MirrorPos(Vector3 worldPos)
+        {
+            if (!mirrorAcrossRootX || root == null) return worldPos;
+            var local = root.InverseTransformPoint(worldPos);
+            local.x = -local.x;
+            return root.TransformPoint(local);
+        }
+
         // 1) Root follow (position only is safest)
         if (followRootPosition && rootBone && rootSphere)
-            rootBone.position = rootSphere.position;
+            rootBone.position = MirrorPos(rootSphere.position);
 
         if (followRootRotation && rootBone && rootSphere)
             rootBone.rotation = rootSphere.rotation;
@@ -53,6 +77,7 @@ public class SpheresToBones_FKDriver : MonoBehaviour
 
             Vector3 boneDir = (s.boneChild.position - s.bone.position);
             Vector3 sphereDir = (s.sphereChild.position - s.sphere.position);
+            sphereDir = MirrorDir(sphereDir);
 
             if (boneDir.sqrMagnitude < 1e-10f || sphereDir.sqrMagnitude < 1e-10f) continue;
 
@@ -68,7 +93,7 @@ public class SpheresToBones_FKDriver : MonoBehaviour
 
             // Only if you REALLY want positional snapping (usually keep false)
             if (s.applyPositionToBone)
-                s.bone.position = s.sphere.position;
+                s.bone.position = MirrorPos(s.sphere.position);
         }
     }
 }
