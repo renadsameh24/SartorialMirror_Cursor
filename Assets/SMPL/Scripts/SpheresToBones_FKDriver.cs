@@ -39,7 +39,6 @@ public class SpheresToBones_FKDriver : MonoBehaviour
     [Header("Smoothing")]
     [Range(0f, 1f)] public float rotLerp = 1f; // 1 = exact, 0.3 = smoother
 
-    [Header("Mirror / coordinate fix")]
     public enum MirrorAxis
     {
         None,
@@ -48,6 +47,7 @@ public class SpheresToBones_FKDriver : MonoBehaviour
         RootZ
     }
 
+    [Header("Mirror / coordinate fix")]
     [Tooltip("Mirror the incoming sphere vectors/positions across the SMPL root local axis. " +
              "Use this when left/right looks swapped or arms move 'the opposite way' relative to the camera.")]
     public MirrorAxis mirrorAxis = MirrorAxis.None;
