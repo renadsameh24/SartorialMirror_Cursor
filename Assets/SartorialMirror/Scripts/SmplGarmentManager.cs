@@ -241,6 +241,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     private readonly List<(Transform g, Transform s, int depth)> _driveBonesSorted = new(48);
     private readonly List<Mesh> runtimeGarmentMeshCopies = new();
     private int _driveApplyCountThisSecond = 0;
+    private int _driveAttemptCountThisSecond = 0;
     private float _driveNextHeartbeatTime = 0f;
     private Quaternion _hbLastSmplJ16 = Quaternion.identity;
     private Quaternion _hbLastGarmentJ16 = Quaternion.identity;
@@ -1302,7 +1303,6 @@ public sealed class SmplGarmentManager : MonoBehaviour
     void DriveHeartbeat()
     {
         if (!logDriveHeartbeat) return;
-        if (!driveGarmentArmatureFromSmpl) return;
         if (!Application.isPlaying) return;
         if (Time.unscaledTime < _driveNextHeartbeatTime) return;
         _driveNextHeartbeatTime = Time.unscaledTime + 1f;
@@ -1345,12 +1345,14 @@ public sealed class SmplGarmentManager : MonoBehaviour
         }
 
         Debug.Log(
-            $"[SmplGarmentManager] Drive heartbeat: applyCalls/sec={_driveApplyCountThisSecond}, mapPairs={(garmentToSmplBoneMap != null ? garmentToSmplBoneMap.Count : 0)}, " +
+            $"[SmplGarmentManager] Drive heartbeat: driveEnabled={driveGarmentArmatureFromSmpl}, eof={applyGarmentDriveAtEndOfFrame}, eofRoutineNull={(garmentDriveEndOfFrameRoutine == null)}, " +
+            $"attempts/sec={_driveAttemptCountThisSecond}, applyCalls/sec={_driveApplyCountThisSecond}, mapPairs={(garmentToSmplBoneMap != null ? garmentToSmplBoneMap.Count : 0)}, " +
             $"smplJ16={(smplJ16 != null ? (smplMoves ? "MOVING" : "static") : "missing")}, " +
             $"garmentJ16={(garmentJ16 != null ? (garmentMoves ? "MOVING" : "static") : "missing")}",
             this);
 
         _driveApplyCountThisSecond = 0;
+        _driveAttemptCountThisSecond = 0;
     }
 
     bool TryGetTwistFixDegreesForKey(string j, out float degrees)
@@ -2023,21 +2025,17 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     void LateUpdate()
     {
-        // Primary drive path: either in LateUpdate, or in the EOF coroutine.
-        // Safety net: if EOF was requested but the coroutine didn't start (e.g. component enabled order),
-        // still drive here so the garment never freezes silently.
-        if (!applyGarmentDriveAtEndOfFrame)
+        // Reliability: always apply drive in LateUpdate when enabled.
+        // (EOF coroutine can still run too; double-applying is harmless because we set absolute rotations.)
+        if (driveGarmentArmatureFromSmpl && ActiveGarmentInstance != null)
         {
+            _driveAttemptCountThisSecond++;
             ApplyGarmentArmatureDrive();
         }
-        else
+        else if (applyGarmentDriveAtEndOfFrame)
         {
-            if (driveGarmentArmatureFromSmpl && garmentDriveEndOfFrameRoutine == null)
-            {
-                // Try to start it; if it can't, at least drive once per LateUpdate.
-                TryStartEndOfFrameGarmentDrive();
-                ApplyGarmentArmatureDrive();
-            }
+            // Keep coroutine alive when requested.
+            TryStartEndOfFrameGarmentDrive();
         }
 
         DriveHeartbeat();
