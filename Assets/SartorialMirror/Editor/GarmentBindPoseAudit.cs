@@ -68,9 +68,12 @@ namespace SartorialMirror.EditorTools
 
             foreach (var k in keyBones)
             {
-                if (!TryGetBone(smplByName, k, out var sb) || !TryGetBone(garmentByName, k, out var gb))
+                bool hasSmpl = TryGetBone(smplByName, k, out var sb);
+                bool hasGarment = TryGetBone(garmentByName, k, out var gb);
+                if (!hasSmpl || !hasGarment)
                 {
-                    Debug.LogWarning($"[BindPoseAudit] Missing key bone '{k}' on {(sb == null ? "SMPL" : "")}{(sb == null && gb == null ? " & " : "")}{(gb == null ? "garment" : "")}.");
+                    string side = !hasSmpl && !hasGarment ? "SMPL & garment" : (!hasSmpl ? "SMPL" : "garment");
+                    Debug.LogWarning($"[BindPoseAudit] Missing key bone '{k}' on {side}.");
                     continue;
                 }
 
