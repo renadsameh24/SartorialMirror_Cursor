@@ -84,22 +84,23 @@ public sealed class SartorialMirrorBootstrap : MonoBehaviour
     void AutoLinkGarmentCatalogInEditor()
     {
         if (Application.isPlaying) return;
+        // Convenience only: auto-assign the catalog reference on this scene object (does NOT modify the catalog asset).
+        if (garmentCatalog == null)
+        {
+            const string catalogPath = "Assets/SartorialMirror/GarmentCatalog.asset";
+            garmentCatalog = AssetDatabase.LoadAssetAtPath<GarmentCatalog>(catalogPath);
+            if (garmentCatalog != null && garmentManager != null)
+                garmentManager.catalog = garmentCatalog;
+        }
+
+        // IMPORTANT:
+        // Do not auto-overwrite GarmentCatalog entries from code.
+        // GarmentCatalog asset references are GUID-based and are the source of truth for which prepared FBX
+        // Unity will spawn. Any "helpful" auto-link here can silently point the catalog at an old FBX and
+        // make runtime diagnostics look like the weight transfer/export failed.
+        //
+        // If you need to change which FBX is used, edit `Assets/SartorialMirror/GarmentCatalog.asset` directly.
         if (garmentCatalog == null) return;
-        if (garmentCatalog.garments == null || garmentCatalog.garments.Count == 0) return;
-
-        const string preparedFbxPath = "Assets/garments_prepared/Flannel_OriginalRig_Drive.fbx";
-        var modelRoot = AssetDatabase.LoadAssetAtPath<GameObject>(preparedFbxPath);
-        if (modelRoot == null) return;
-
-        var entry0 = garmentCatalog.garments[0];
-        if (entry0 == null) return;
-
-        if (entry0.garmentPrefab == modelRoot) return;
-
-        entry0.displayName = "Flannel Shirt (Original rig, Drive mode)";
-        entry0.garmentPrefab = modelRoot;
-        EditorUtility.SetDirty(garmentCatalog);
-        AssetDatabase.SaveAssets();
     }
 #endif
 
