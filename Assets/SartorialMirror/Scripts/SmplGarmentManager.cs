@@ -104,6 +104,10 @@ public sealed class SmplGarmentManager : MonoBehaviour
     [Tooltip("If true, after spawning we snap the garment to the SMPL pelvis/hips to correct FBX root offsets.")]
     public bool snapGarmentToSmplPelvis = true;
 
+    [Tooltip("If true, after spawning we uniformly scale the garment instance to match SMPL's visible mesh bounds. " +
+             "Use this when the imported garment FBX is the correct shape but comes in at the wrong unit scale (\"huge shirt\" / tiny shirt).")]
+    public bool autoScaleGarmentToSmplBounds = true;
+
     [Tooltip("If true, keep snapping every frame. Can fight armature driving if alignment is already correct; try off first.")]
     public bool continuousPelvisSnap = false;
 
@@ -722,6 +726,14 @@ public sealed class SmplGarmentManager : MonoBehaviour
         if (snapGarmentToSmplPelvis)
             SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
 
+        if (autoScaleGarmentToSmplBounds)
+        {
+            AutoScaleGarmentInstanceToSmpl(ActiveGarmentInstance);
+            // Re-snap after scaling so pelvis still matches.
+            if (snapGarmentToSmplPelvis)
+                SnapGarmentRootToSmplPelvis(ActiveGarmentInstance);
+        }
+
         // Drive mode with an empty map leaves bones on the prefab armature while we disable Animators → frozen mesh.
         bool useArmatureDrive = driveGarmentArmatureFromSmpl;
         if (useArmatureDrive)
@@ -754,6 +766,41 @@ public sealed class SmplGarmentManager : MonoBehaviour
         ApplyActiveColorVariant();
         LogPipelineDiagnosisAfterSpawn();
         return true;
+    }
+
+    void AutoScaleGarmentInstanceToSmpl(GameObject garmentRoot)
+    {
+        if (garmentRoot == null || smplRoot == null) return;
+
+        // Find a representative SMPL mesh renderer (exclude anything under _Garments).
+        EnsureGarmentsParent();
+        SkinnedMeshRenderer smplSmr = null;
+        foreach (var smr in smplRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (!smr) continue;
+            if (garmentsParent != null && smr.transform.IsChildOf(garmentsParent)) continue;
+            smplSmr = smr;
+            break;
+        }
+        var garmentSmr = garmentRoot.GetComponentInChildren<SkinnedMeshRenderer>(true);
+        if (smplSmr == null || garmentSmr == null) return;
+
+        float smplMag = smplSmr.bounds.size.magnitude;
+        float garmentMag = garmentSmr.bounds.size.magnitude;
+        if (smplMag <= 1e-6f || garmentMag <= 1e-6f) return;
+
+        float ratio = smplMag / garmentMag;
+        // Avoid crazy scaling; if it's far off, fix the FBX export/import.
+        if (ratio < 0.1f || ratio > 10f)
+        {
+            if (logSpawnFailures)
+                Debug.LogWarning($"[SmplGarmentManager] Auto-scale skipped (ratio={ratio:F3}). Garment or SMPL bounds look extreme; fix FBX units/export.", garmentRoot);
+            return;
+        }
+
+        garmentRoot.transform.localScale *= ratio;
+        if (logMissingBoneNames)
+            Debug.Log($"[SmplGarmentManager] Auto-scaled garment instance by {ratio:F4} to match SMPL bounds.", garmentRoot);
     }
 
 #if UNITY_EDITOR

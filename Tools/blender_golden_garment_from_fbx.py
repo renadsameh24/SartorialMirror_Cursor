@@ -66,6 +66,7 @@ DISALLOW_BONES = tuple(
     s.strip() for s in (os.environ.get("DISALLOW_BONES", "J15,J22,J23") or "").split(",") if s.strip()
 )
 AUTO_ALIGN = os.environ.get("AUTO_ALIGN", "1").strip() in ("1", "true", "yes", "on")
+AUTO_SCALE = os.environ.get("AUTO_SCALE", "1").strip() in ("1", "true", "yes", "on")
 ALLOW_BONES = tuple(
     s.strip()
     for s in (
@@ -205,6 +206,47 @@ def world_bbox_center(obj: bpy.types.Object) -> Vector:
     for p in pts:
         c += p
     return c * (1.0 / max(1, len(pts)))
+
+
+def world_bbox_size(obj: bpy.types.Object) -> Vector:
+    """World-space axis-aligned bbox size from bound_box corners."""
+    mw = obj.matrix_world
+    pts = [mw @ Vector(corner) for corner in obj.bound_box]
+    mn = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
+    mx = Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
+    return mx - mn
+
+
+def auto_scale_garment_to_body(garment: bpy.types.Object, body: bpy.types.Object) -> None:
+    """
+    Many raw garment FBXs come in with a different unit scale than the SMPL FBX.
+    AUTO_SCALE uniformly scales the garment so its bbox magnitude matches the body.
+    """
+    if not AUTO_SCALE:
+        return
+    if garment is None or body is None:
+        return
+
+    bpy.context.view_layer.depsgraph.update()
+    gsz = world_bbox_size(garment)
+    bsz = world_bbox_size(body)
+
+    g = float(gsz.length)
+    b = float(bsz.length)
+    if g <= 1e-8 or b <= 1e-8:
+        return
+
+    s = b / g
+    # Avoid pathological scaling; if it's wildly off, better to fix export settings upstream.
+    if s < 0.25 or s > 4.0:
+        log(f"AUTO_SCALE=1: computed scale {s:.4f} looks extreme; skipping.")
+        return
+
+    ensure_active(garment)
+    garment.scale = garment.scale * s
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    bpy.context.view_layer.depsgraph.update()
+    log(f"AUTO_SCALE=1: scaled garment by {s:.4f} to match body bbox size.")
 
 
 def auto_align_garment_to_body(garment: bpy.types.Object, body: bpy.types.Object) -> None:
@@ -832,6 +874,7 @@ def run() -> int:
     log(f"Armature (keep): {arm.name}")
     log(f"Body (weight source): {body.name} | body vgroups={len(body.vertex_groups)}")
     log(f"Garment (target): {garment.name}")
+    auto_scale_garment_to_body(garment, body)
 
     if KEEP_ORIGINAL_RIG:
         garment_arm = find_garment_armature_for_mesh(garment)
