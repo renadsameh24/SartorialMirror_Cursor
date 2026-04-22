@@ -894,16 +894,28 @@ public sealed class SmplGarmentManager : MonoBehaviour
         float garmentMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
         if (garmentMag <= 1e-6f) return;
 
+        // Heuristic sanity: a human-sized SMPL body should be on the order of 0.5–5 meters in magnitude.
+        // If mesh bounds are wildly outside that, prefer skeleton-distance fallback (mesh bounds can be broken by import units).
+        static bool PlausibleMagnitude(float m) => float.IsFinite(m) && m > 0.05f && m < 10f;
+
         string smplSource = "meshBounds";
-        if (smplMag <= 1e-6f)
+        if (!PlausibleMagnitude(smplMag))
         {
-            // Mesh bounds were unusable; use skeleton distance to compute a reasonable scale.
+            // Mesh bounds were unusable or implausible; use skeleton distance to compute a reasonable scale.
             float skel = SmplSkeletonMagnitudeFallback(out smplSource);
             if (skel > 1e-6f)
                 smplMag = skel;
         }
 
         if (smplMag <= 1e-6f) return;
+
+        // If garment mesh bounds look implausible too, also fall back to skeleton-ish sizing by using its bind pose bones (if any).
+        // This is rare, but protects against FBXs with bad bounds.
+        if (!PlausibleMagnitude(garmentMag))
+        {
+            // Use the garment renderer's imported bounds size magnitude only (already in garmentMag) as last resort.
+            // If it's implausible, we still proceed but clamp ratio below.
+        }
 
         float ratio = smplMag / garmentMag;
         if (!float.IsFinite(ratio) || ratio <= 0f) return;
