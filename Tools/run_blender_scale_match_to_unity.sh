@@ -5,7 +5,8 @@
 # Usage (from repo root):
 #   ./Tools/run_blender_scale_match_to_unity.sh
 #
-# Or set GARMENT_FBX / EXPORT_FBX explicitly (absolute paths recommended).
+# Optional: SCALE_MATCH_GARMENT_FBX=/path/to/prepared.fbx overrides defaults.
+# Do not point SCALE_MATCH at the raw VR4D shirt FBX (no SMPL bones).
 
 set -euo pipefail
 
@@ -13,8 +14,23 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
 export SCALE_MATCH_ONLY=1
-export GARMENT_FBX="${GARMENT_FBX:-$REPO/Assets/garments_prepared/Flannel_SMPL_Skinned.fbx}"
+
+# Stale GARMENT_FBX often points at the *raw* retail shirt (only "Armature", no SMPL J-bones).
+# SCALE_MATCH_ONLY needs the *prepared* SMPL-skinned FBX (SMPL_Armature + shirt).
+if [[ -n "${GARMENT_FBX:-}" ]]; then
+  case "$GARMENT_FBX" in
+    *VR4D030312_ShirtFlannelBWWoman_Normal*)
+      echo "[run_blender_scale_match] Ignoring GARMENT_FBX (raw shirt): $GARMENT_FBX" >&2
+      echo "[run_blender_scale_match] Use prepared: $REPO/Assets/garments_prepared/Flannel_SMPL_Skinned.fbx (or SCALE_MATCH_GARMENT_FBX=...)" >&2
+      unset GARMENT_FBX
+      ;;
+  esac
+fi
+export GARMENT_FBX="${SCALE_MATCH_GARMENT_FBX:-${GARMENT_FBX:-$REPO/Assets/garments_prepared/Flannel_SMPL_Skinned.fbx}}"
 export EXPORT_FBX="${EXPORT_FBX:-$REPO/Assets/garments_prepared/Flannel_SMPL_Skinned.fbx}"
+if [[ -n "${EXPORT_FBX:-}" && "$EXPORT_FBX" != "$REPO/"* ]]; then
+  echo "[run_blender_scale_match] WARNING: EXPORT_FBX is outside this repo: $EXPORT_FBX" >&2
+fi
 
 if [[ ! -f "$GARMENT_FBX" ]]; then
   echo "Missing FBX: $GARMENT_FBX" >&2

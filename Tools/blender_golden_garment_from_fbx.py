@@ -420,7 +420,12 @@ def auto_scale_garment_using_armature_only(garment: bpy.types.Object, arm: bpy.t
     if s is None or not math.isfinite(s) or s <= 0.0:
         s = cands.get("torso_vs_garment_max") or cands.get("torso_vs_garment_diag")
     if s is None or not math.isfinite(s) or s <= 0.0:
-        log("AUTO_SCALE armature-only: could not compute scale factor; skipping.")
+        log(
+            "AUTO_SCALE armature-only: could not compute scale factor (no usable ratios). "
+            "This mode needs an FBX with **SMPL_Armature** and SMPL bone names (J00, J12, J16, …). "
+            "A **raw retail shirt** (only 'Armature') cannot be scaled here — use the full two-FBX pipeline instead, "
+            "or set GARMENT_FBX to your prepared Flannel_SMPL_Skinned.fbx."
+        )
         return False
     # Shirt-only FBXs that already match Unity/SMPL often still have a huge mesh AABB vs bone line length;
     # applying a tiny factor here can destroy the asset. Skip extreme factors unless explicitly allowed.

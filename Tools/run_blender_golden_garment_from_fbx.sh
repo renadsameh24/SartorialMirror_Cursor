@@ -22,8 +22,22 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
-export SMPL_FBX="${SMPL_FBX:-$REPO/Assets/SMPL/Models/SMPL_neutral_rig_GOLDEN.fbx}"
+# Prefer SMPL from *this* checkout. A stale SMPL_FBX from another Unity clone (e.g. ~/Documents/UnityProjects/...)
+# mixes rigs with a shirt path from this repo and causes confusing exports.
+_SMPL_LOCAL="$REPO/Assets/SMPL/Models/SMPL_neutral_rig_GOLDEN.fbx"
+if [[ -f "$_SMPL_LOCAL" && "${USE_FOREIGN_SMPL_FBX:-0}" != "1" ]]; then
+  if [[ -z "${SMPL_FBX:-}" || "$SMPL_FBX" != "$REPO/"* ]]; then
+    echo "[run_blender_golden_garment] SMPL_FBX -> $_SMPL_LOCAL (avoid mixed clone paths; USE_FOREIGN_SMPL_FBX=1 to keep SMPL_FBX=${SMPL_FBX:-})" >&2
+    export SMPL_FBX="$_SMPL_LOCAL"
+  fi
+else
+  export SMPL_FBX="${SMPL_FBX:-$REPO/Assets/SMPL/Models/SMPL_neutral_rig_GOLDEN.fbx}"
+fi
+
 export EXPORT_FBX="${EXPORT_FBX:-$REPO/Assets/garments_prepared/Flannel_SMPL_Skinned.fbx}"
+if [[ -n "${EXPORT_FBX:-}" && "$EXPORT_FBX" != "$REPO/"* ]]; then
+  echo "[run_blender_golden_garment] WARNING: EXPORT_FBX is outside this repo: $EXPORT_FBX (Unity may be a different clone than this script)." >&2
+fi
 # Default source shirt in this repo (when you run the helper with no args).
 _DEFAULT_SHIRT="$REPO/Assets/garments/VR4D030312_ShirtFlannelBWWoman_Normal.fbx"
 
