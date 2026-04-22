@@ -241,6 +241,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     void Awake()
     {
         EnsureSmplRoot();
+        AutoResolveDrivenArmatureRootFromFk();
         EnsureBoneMapExcludingGarments();
         cachedSmplPelvis = FindFirstByNames(smplRoot, smplPelvisBoneNames);
     }
@@ -249,6 +250,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
     {
         if (applyPresetOnEnable)
             ApplyPreset(tuningPreset);
+        AutoResolveDrivenArmatureRootFromFk();
         TryStartEndOfFrameGarmentDrive();
     }
 
@@ -626,6 +628,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
                 Debug.LogWarning($"Garment spawn failed: SMPL root '{smplRootName}' not found in scene.", this);
             return false;
         }
+        // Always prefer the actually-driven skeleton (FK) when multiple armatures exist.
+        AutoResolveDrivenArmatureRootFromFk();
         EnsureBoneMapExcludingGarments();
 
         if (catalog == null || catalog.garments == null)
@@ -704,6 +708,32 @@ public sealed class SmplGarmentManager : MonoBehaviour
         ApplyActiveColorVariant();
         LogPipelineDiagnosisAfterSpawn();
         return true;
+    }
+
+    /// <summary>
+    /// If the scene contains multiple SMPL armatures with duplicate J-bone names, always bind garments to the one that FK actually drives.
+    /// This auto-sets <see cref="smplArmatureRootOverride"/> so remap/drive never locks onto a static duplicate.
+    /// </summary>
+    void AutoResolveDrivenArmatureRootFromFk()
+    {
+        if (smplRoot == null) return;
+
+        var fk = FindSpheresToBonesFkInScene(smplRoot);
+        if (fk == null || fk.rootBone == null) return;
+        if (!fk.rootBone.IsChildOf(smplRoot)) return;
+
+        var drivenArmature = FindDirectChildOfSmplRootOnPathToDescendant(smplRoot, fk.rootBone);
+        if (drivenArmature == null) return;
+        if (IsTransformUnderGarments(drivenArmature)) return;
+
+        if (smplArmatureRootOverride != drivenArmature)
+        {
+            smplArmatureRootOverride = drivenArmature;
+            if (logMissingBoneNames)
+                Debug.Log(
+                    $"[SmplGarmentManager] Auto-set Smpl Armature Root Override to driven FK armature '{drivenArmature.name}' (anchor '{fk.rootBone.name}').",
+                    this);
+        }
     }
 
     [ContextMenu("Log pipeline diagnosis (Play Mode)")]
