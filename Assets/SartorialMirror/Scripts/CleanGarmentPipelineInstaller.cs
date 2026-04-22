@@ -43,7 +43,7 @@ public sealed class CleanGarmentPipelineInstaller : MonoBehaviour
         }
 
         if (disableConflictingPoseScripts)
-            DisableConflictingScripts(smplRoot);
+            DisableConflictingScriptsGlobal(smplRoot);
 
         var fk = FindObjectOfType<SpheresToBones_FKDriver>(true);
         if (fk != null)
@@ -90,7 +90,7 @@ public sealed class CleanGarmentPipelineInstaller : MonoBehaviour
         return null;
     }
 
-    static void DisableConflictingScripts(Transform smplRoot)
+    static void DisableConflictingScriptsGlobal(Transform smplRoot)
     {
         // These scripts overlap in responsibility (root follow / sphere scaling / IK experiments)
         // and are the most common sources of NaN assertions when fed bad joint data.
@@ -103,6 +103,7 @@ public sealed class CleanGarmentPipelineInstaller : MonoBehaviour
             "CharacterRootFollowPelvisSphereSafe",
             "FollowTransform",
             "FollowTransformEndOfFrame",
+            "SmplPoseFromSpheres",
             "IKDriver_ExactUpdate",
             "IKDriver_Safe",
             "IKDriver_Stable",
@@ -124,7 +125,7 @@ public sealed class CleanGarmentPipelineInstaller : MonoBehaviour
         };
 
         int disabled = 0;
-        foreach (var mb in smplRoot.GetComponentsInChildren<MonoBehaviour>(true))
+        foreach (var mb in UnityEngine.Object.FindObjectsOfType<MonoBehaviour>(true))
         {
             if (mb == null || !mb.enabled) continue;
             var n = mb.GetType().Name;
@@ -136,7 +137,7 @@ public sealed class CleanGarmentPipelineInstaller : MonoBehaviour
         }
 
         if (disabled > 0)
-            Debug.Log($"[CleanPipeline] Disabled {disabled} conflicting pose scripts under '{smplRoot.name}'.", smplRoot);
+            Debug.Log($"[CleanPipeline] Disabled {disabled} conflicting pose scripts (global scan).", smplRoot);
     }
 }
 
