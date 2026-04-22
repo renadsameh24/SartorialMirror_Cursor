@@ -21,6 +21,15 @@ public enum GarmentBindPoseReference
 [DefaultExecutionOrder(3200)]
 public sealed class SmplGarmentManager : MonoBehaviour
 {
+    public enum TuningPreset
+    {
+        RemapOnly,
+        Remap_RecalcBindPoses_RootBoneWorld,
+        Drive_Stable_NoTwistFix,
+        Drive_TwistFix_180,
+        Drive_MaxStability_TwistFix_Clamp
+    }
+
     // Maps common SMPL/humanoid bone names to this project's SMPL rig joint names (Jxx).
     // This project’s rig uses J00.. naming (see existing scripts referencing J16/J18/etc).
     private static readonly Dictionary<string, string> SmplAliasToJ = new(StringComparer.OrdinalIgnoreCase)
@@ -164,6 +173,13 @@ public sealed class SmplGarmentManager : MonoBehaviour
              "Off by default: if the coroutine fails to start, the garment would not move. Turn on only when debugging arm spikes.")]
     public bool applyGarmentDriveAtEndOfFrame = false;
 
+    [Header("Presets (quality of life)")]
+    [Tooltip("Pick a preset, then click Apply Preset (context menu) or enable applyPresetOnEnable for Play Mode iteration.")]
+    public TuningPreset tuningPreset = TuningPreset.RemapOnly;
+
+    [Tooltip("If true, applies the selected preset in OnEnable (useful since bootstrap adds components at runtime).")]
+    public bool applyPresetOnEnable = false;
+
     [Header("Catalog")]
     public GarmentCatalog catalog;
 
@@ -208,6 +224,8 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
     void OnEnable()
     {
+        if (applyPresetOnEnable)
+            ApplyPreset(tuningPreset);
         TryStartEndOfFrameGarmentDrive();
     }
 
@@ -215,6 +233,86 @@ public sealed class SmplGarmentManager : MonoBehaviour
     {
         // AddComponent during another Awake can skip OnEnable timing; ensure EOF drive still starts when enabled.
         TryStartEndOfFrameGarmentDrive();
+    }
+
+    [ContextMenu("Apply tuning preset")]
+    public void ApplyTuningPresetFromContextMenu()
+    {
+        ApplyPreset(tuningPreset);
+    }
+
+    public void ApplyPreset(TuningPreset preset)
+    {
+        tuningPreset = preset;
+
+        switch (preset)
+        {
+            case TuningPreset.RemapOnly:
+                driveGarmentArmatureFromSmpl = false;
+                recalculateBindPosesAfterRemap = false;
+                bindPoseReference = GarmentBindPoseReference.SkinnedMeshRendererLocal;
+                applyArmTwistFix = false;
+                useBindPoseRotationOffset = false;
+                applyGarmentDriveAtEndOfFrame = false;
+                clampBoneStretch = false;
+                drivePositions = false;
+                matchDrivenBonesToSmplWorld = true;
+                break;
+
+            case TuningPreset.Remap_RecalcBindPoses_RootBoneWorld:
+                driveGarmentArmatureFromSmpl = false;
+                recalculateBindPosesAfterRemap = true;
+                bindPoseReference = GarmentBindPoseReference.RootBoneWorld;
+                applyArmTwistFix = false;
+                useBindPoseRotationOffset = false;
+                applyGarmentDriveAtEndOfFrame = false;
+                clampBoneStretch = false;
+                break;
+
+            case TuningPreset.Drive_Stable_NoTwistFix:
+                driveGarmentArmatureFromSmpl = true;
+                recalculateBindPosesAfterRemap = false;
+                applyArmTwistFix = false;
+                useBindPoseRotationOffset = true;
+                applyGarmentDriveAtEndOfFrame = true;
+                matchDrivenBonesToSmplWorld = true;
+                drivePositions = false;
+                clampBoneStretch = false;
+                break;
+
+            case TuningPreset.Drive_TwistFix_180:
+                driveGarmentArmatureFromSmpl = true;
+                recalculateBindPosesAfterRemap = false;
+                applyArmTwistFix = true;
+                armTwistFixDegrees = 180f;
+                useBindPoseRotationOffset = true;
+                applyGarmentDriveAtEndOfFrame = true;
+                matchDrivenBonesToSmplWorld = true;
+                drivePositions = false;
+                clampBoneStretch = false;
+                break;
+
+            case TuningPreset.Drive_MaxStability_TwistFix_Clamp:
+                driveGarmentArmatureFromSmpl = true;
+                recalculateBindPosesAfterRemap = false;
+                applyArmTwistFix = true;
+                armTwistFixDegrees = 180f;
+                useBindPoseRotationOffset = true;
+                applyGarmentDriveAtEndOfFrame = true;
+                matchDrivenBonesToSmplWorld = true;
+                drivePositions = false;
+                clampBoneStretch = true;
+                clampSlackMeters = Mathf.Clamp(clampSlackMeters, 0.005f, 0.03f);
+                break;
+        }
+
+        // Make sure remap updates are visible.
+        if (!driveGarmentArmatureFromSmpl && ActiveGarmentInstance != null)
+            RemapAllSkinnedMeshesToSmpl(ActiveGarmentInstance);
+
+        // Drive mode needs a map.
+        if (driveGarmentArmatureFromSmpl && ActiveGarmentInstance != null)
+            BuildGarmentArmatureDriveMap(ActiveGarmentInstance);
     }
 
     void TryStartEndOfFrameGarmentDrive()
