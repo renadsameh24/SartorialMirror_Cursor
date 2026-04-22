@@ -2,6 +2,10 @@
 # Scale-match an already SMPL-skinned garment FBX in Blender (no weight re-transfer), then overwrite
 # EXPORT_FBX so Unity can reimport the same asset path (e.g. Assets/garments_prepared/Flannel_SMPL_Skinned.fbx).
 #
+# Often exits without exporting: shirt-only prepared FBXs already match Unity scale; armature-only math
+# can suggest a tiny factor (e.g. 0.003) which we skip on purpose. After a successful golden pipeline run,
+# you usually do NOT need this script — tune size in Unity (SmplGarmentManager) instead.
+#
 # Usage (from repo root):
 #   ./Tools/run_blender_scale_match_to_unity.sh
 #

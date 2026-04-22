@@ -431,9 +431,12 @@ def auto_scale_garment_using_armature_only(garment: bpy.types.Object, arm: bpy.t
     # applying a tiny factor here can destroy the asset. Skip extreme factors unless explicitly allowed.
     if not ALLOW_EXTREME_ARMATURE_SCALE and (s < 0.2 or s > 5.0):
         log(
-            f"AUTO_SCALE armature-only: median scale {s:.4f} is outside [0.2, 5.0] — skipping "
-            f"(garment may already be correct for Unity). Re-scale in Unity, or import SMPL+shirt with a body mesh, "
-            f"or set ALLOW_EXTREME_ARMATURE_SCALE=1 to apply anyway."
+            f"AUTO_SCALE armature-only: median scale {s:.4f} is outside [0.2, 5.0] — skipping export. "
+            "Shirt-only FBXs from the golden pipeline are usually **already scaled** for Unity; "
+            "bone lengths vs shirt AABB in Blender often look like a huge shrink (this is normal). "
+            "You do **not** need scale_match after a successful golden export — use Unity "
+            "`SmplGarmentManager` (auto scale / multiplier) for fine tuning. "
+            "If you truly must apply this factor in Blender: set ALLOW_EXTREME_ARMATURE_SCALE=1 (can ruin the mesh)."
         )
         return False
     s0 = s
