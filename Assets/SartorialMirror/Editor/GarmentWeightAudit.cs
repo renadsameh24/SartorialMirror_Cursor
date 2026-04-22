@@ -9,7 +9,15 @@ namespace SartorialMirror.EditorTools
     {
         private const string PreparedFbxPath = "Assets/garments_prepared/Flannel_SMPL_Skinned.fbx";
 
-        [MenuItem("SartorialMirror/Audit/Prepared Garment Weights (Flannel_SMPL_Skinned)")]
+        [InitializeOnLoadMethod]
+        private static void OnEditorLoad()
+        {
+            // If the user doesn't see the menu item, the usual cause is: opened the wrong Unity project,
+            // or compilation errors prevented Editor scripts from loading. This message confirms load.
+            Debug.Log("[GarmentWeightAudit] Loaded. Menu: Tools/SartorialMirror/Audit/Prepared Garment Weights (Flannel_SMPL_Skinned)");
+        }
+
+        [MenuItem("Tools/SartorialMirror/Audit/Prepared Garment Weights (Flannel_SMPL_Skinned)")]
         public static void AuditPreparedGarmentWeights()
         {
             var modelRoot = AssetDatabase.LoadAssetAtPath<GameObject>(PreparedFbxPath);
