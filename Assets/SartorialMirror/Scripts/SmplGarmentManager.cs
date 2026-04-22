@@ -881,6 +881,44 @@ public sealed class SmplGarmentManager : MonoBehaviour
             return 0f;
         }
 
+        static float GarmentSkeletonMagnitudeFallback(GameObject garment, out string source)
+        {
+            source = "none";
+            if (garment == null) return 0f;
+
+            Transform j00 = null, j12 = null, j15 = null, j16 = null, j17 = null, j20 = null, j21 = null;
+            foreach (var t in garment.GetComponentsInChildren<Transform>(true))
+            {
+                if (t == null) continue;
+                var k = ResolveSmplKey(t.name);
+                if (string.Equals(k, "J00", StringComparison.OrdinalIgnoreCase)) j00 ??= t;
+                else if (string.Equals(k, "J12", StringComparison.OrdinalIgnoreCase)) j12 ??= t;
+                else if (string.Equals(k, "J15", StringComparison.OrdinalIgnoreCase)) j15 ??= t;
+                else if (string.Equals(k, "J16", StringComparison.OrdinalIgnoreCase)) j16 ??= t;
+                else if (string.Equals(k, "J17", StringComparison.OrdinalIgnoreCase)) j17 ??= t;
+                else if (string.Equals(k, "J20", StringComparison.OrdinalIgnoreCase)) j20 ??= t;
+                else if (string.Equals(k, "J21", StringComparison.OrdinalIgnoreCase)) j21 ??= t;
+            }
+
+            if (j00 != null && (j12 != null || j15 != null))
+            {
+                var top = j12 != null ? j12 : j15;
+                source = "pelvis->neck/head";
+                return Vector3.Distance(j00.position, top.position);
+            }
+            if (j16 != null && j20 != null)
+            {
+                source = "L shoulder->wrist";
+                return Vector3.Distance(j16.position, j20.position);
+            }
+            if (j17 != null && j21 != null)
+            {
+                source = "R shoulder->wrist";
+                return Vector3.Distance(j17.position, j21.position);
+            }
+            return 0f;
+        }
+
         // Find a representative SMPL mesh renderer (exclude anything under _Garments).
         EnsureGarmentsParent();
         SkinnedMeshRenderer smplSmr = null;
@@ -913,12 +951,12 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         if (smplMag <= 1e-6f) return;
 
-        // If garment mesh bounds look implausible too, also fall back to skeleton-ish sizing by using its bind pose bones (if any).
-        // This is rare, but protects against FBXs with bad bounds.
+        string garmentSource = "meshBounds";
         if (!PlausibleMagnitude(garmentMag))
         {
-            // Use the garment renderer's imported bounds size magnitude only (already in garmentMag) as last resort.
-            // If it's implausible, we still proceed but clamp ratio below.
+            float gSkel = GarmentSkeletonMagnitudeFallback(garmentRoot, out garmentSource);
+            if (PlausibleMagnitude(gSkel))
+                garmentMag = gSkel;
         }
 
         float ratio = smplMag / garmentMag;
@@ -974,7 +1012,7 @@ public sealed class SmplGarmentManager : MonoBehaviour
 
         if (logMissingBoneNames)
             Debug.Log(
-                $"[SmplGarmentManager] Auto-scaled garment by {applied:F6} (ratio={ratio:F6} * mult={mult:F6}) to match SMPL size ({smplSource}). smplMag={smplMag:F3} garmentMag={garmentMag:F3} postGarmentMag={postMag:F3}.",
+                $"[SmplGarmentManager] Auto-scaled garment by {applied:F6} (ratio={ratio:F6} * mult={mult:F6}) to match SMPL size ({smplSource} vs garment {garmentSource}). smplMag={smplMag:F3} garmentMag={garmentMag:F3} postGarmentMag={postMag:F3}.",
                 garmentRoot);
     }
 
