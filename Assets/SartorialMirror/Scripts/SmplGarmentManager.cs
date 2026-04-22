@@ -113,6 +113,11 @@ public sealed class SmplGarmentManager : MonoBehaviour
              "when your garment FBX units differ from SMPL (e.g. 0.01 or 0.004).")]
     public float autoScaleMultiplier = 1f;
 
+    [Header("Silhouette match (optional)")]
+    [Tooltip("After uniform autoscale, apply an extra uniform scale so shoulder span (J16–J17) matches SMPL. " +
+             "Helps when torso length already lines up but the shirt still looks visibly too wide or too narrow.")]
+    public bool matchShoulderSpanAfterAutoscale = true;
+
     [Tooltip("If true, keep snapping every frame. Can fight armature driving if alignment is already correct; try off first.")]
     public bool continuousPelvisSnap = false;
 
@@ -1034,12 +1039,67 @@ public sealed class SmplGarmentManager : MonoBehaviour
             }
         }
 
+        // Silhouette pass: shirts can match torso length but still look oversized vs SMPL shoulder width.
+        if (matchShoulderSpanAfterAutoscale && scaleMeshesInsteadOfRoot)
+        {
+            if (TryShoulderSpanScaleFactor(smplSmr, garmentSmr, out var shoulderFactor))
+            {
+                shoulderFactor = Mathf.Clamp(shoulderFactor, 0.5f, 2.0f);
+                if (Mathf.Abs(shoulderFactor - 1f) > 0.02f)
+                {
+                    ScaleGarmentMeshesVertices(garmentRoot, shoulderFactor);
+                    applied *= shoulderFactor;
+                    postMag = MeshWorldBoundsMagnitudeFromImported(garmentSmr);
+                    try
+                    {
+                        garmentSkinnedMag = float.IsFinite(garmentSmr.bounds.size.magnitude)
+                            ? garmentSmr.bounds.size.magnitude
+                            : garmentSkinnedMag;
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+        }
+
         if (logMissingBoneNames)
             Debug.Log(
                 $"[SmplGarmentManager] Auto-scaled garment by {applied:F6} (ratio={ratio:F6} * mult={mult:F6}) to match SMPL size ({smplSource} vs garment {garmentSource}). " +
                 $"importedWorldMag: smpl={smplMag:F3} garment={garmentMag:F3} postGarment={postMag:F3} | " +
                 $"skinnedBoundsMag: smpl={smplSkinnedMag:F3} garment={garmentSkinnedMag:F3}.",
                 garmentRoot);
+    }
+
+    static bool TryShoulderSpanScaleFactor(SkinnedMeshRenderer smplSmr, SkinnedMeshRenderer garmentSmr, out float factor)
+    {
+        factor = 1f;
+        if (smplSmr == null || garmentSmr == null) return false;
+
+        Transform lS = null, rS = null;
+        foreach (var b in smplSmr.bones)
+        {
+            if (!b) continue;
+            var k = ResolveSmplKey(b.name);
+            if (string.Equals(k, "J16", StringComparison.OrdinalIgnoreCase)) lS ??= b;
+            else if (string.Equals(k, "J17", StringComparison.OrdinalIgnoreCase)) rS ??= b;
+        }
+        if (lS == null || rS == null) return false;
+
+        Transform glS = null, grS = null;
+        foreach (var b in garmentSmr.bones)
+        {
+            if (!b) continue;
+            var k = ResolveSmplKey(b.name);
+            if (string.Equals(k, "J16", StringComparison.OrdinalIgnoreCase)) glS ??= b;
+            else if (string.Equals(k, "J17", StringComparison.OrdinalIgnoreCase)) grS ??= b;
+        }
+        if (glS == null || grS == null) return false;
+
+        float smplSpan = Vector3.Distance(lS.position, rS.position);
+        float garmentSpan = Vector3.Distance(glS.position, grS.position);
+        if (smplSpan <= 1e-6f || garmentSpan <= 1e-6f) return false;
+
+        factor = smplSpan / garmentSpan;
+        return float.IsFinite(factor) && factor > 0f;
     }
 
     void ScaleGarmentMeshesVertices(GameObject garmentRoot, float uniformScale)
